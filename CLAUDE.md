@@ -17,7 +17,7 @@ make                                              # compiles → intense.out
 ./intense.out --repl [file.intense|file.in10] [tapes=4] [--debug]
 ```
 
-REPL mode executes one symbolic instruction at a time, prints all tapes after each step with the active head marked, and asks on exit whether to save the entered instruction history as a `.in10` file.
+REPL mode executes one symbolic instruction at a time, prints the active tape after each step with the active head marked, supports `PRINT_TAPE n` for inspecting another tape, and asks on exit whether to save the entered instruction history as a `.in10` file.
 
 ## Architecture — One Sentence Each
 
@@ -51,7 +51,7 @@ REPL mode executes one symbolic instruction at a time, prints all tapes after ea
 
 ## Instruction Categories
 
-Tape nav: `MOVE`, `BACK`, `TAPE`, `SEEK n`  
+Tape nav: `MOVE`, `BACK`, `TAPE`, `SEEK n`, `PRINT_TAPE n`  
 Cell ops: `SET`, `PRINT`, `PRINTJ`, `LEN`/`LENGTH`, `CMP`/`COMPARE`, `COPY`, `DELETE`  
 Type sys: `TYPE`, `CAST`  
 Arithmetic: `ADD`, `SUB`, `MUL`, `DIV`, `MOD`, `ABS`, `NEG` — binary ops accept literal or `@N`; unary ops work on current cell  

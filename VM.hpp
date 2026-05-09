@@ -35,6 +35,6 @@ public:
     void runBlock(const Code& code);
     void execute(const Instruction& ins);
     void debug(const Instruction& ins);
-    std::string tapeSnapshot(int radius = 3) const;
+    std::string tapeSnapshot(int radius = 3, int tapeIndex = -1) const;
     void setStepMode(bool enable) { stepMode = enable; }
 };

@@ -8,8 +8,8 @@
 
 static void usage(const char* prog) {
     std::cerr << "Usage: " << prog
-              << " <file.intense|file.in10> [entry=main] [tapes=4] [--debug] [--step]\n"
-              << "       " << prog << " --repl [file.intense|file.in10] [tapes=4] [--debug]\n";
+              << " <file.in10s> [entry=main] [tapes=4] [--debug] [--step]\n"
+              << "       " << prog << " --repl [file.intense|file.in10s] [tapes=4] [--debug]\n";
 }
 
 static std::string trim(const std::string& s) {
@@ -34,12 +34,13 @@ static void printReplHelp() {
         << "Intense symbolic tape REPL\n"
         << "Commands:\n"
         << "  :help          show this help\n"
-        << "  :tapes         show current tape state\n"
+        << "  :tapes         show active tape state\n"
         << "  :quit / :exit  leave REPL and optionally save session as .in10\n"
         << "\n"
         << "Enter one instruction per line, for example:\n"
         << "  SET \"hello\"\n"
         << "  MOVE 1\n"
+        << "  PRINT_TAPE 2\n"
         << "  SET (SET \"generated\" ; PRINT)\n"
         << "  EXEC\n"
         << "\n";
@@ -127,6 +128,8 @@ static int runRepl(int argc, char* argv[]) {
                 continue;
             vm.execute(ins);
             history.push_back(line);
+            if (ins.opcode == "PRINT_TAPE")
+                continue;
         } catch (const std::exception& e) {
             std::cerr << "Error: " << e.what() << "\n";
         }
