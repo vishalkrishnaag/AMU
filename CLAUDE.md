@@ -7,17 +7,17 @@
 
 ## What This Is
 
-A **symbolic tape-oriented virtual machine** implemented in C++. Inspired by Turing machines, Brainfuck, stack VMs, and symbolic execution engines. Files use the `.intense` extension.
+A **symbolic tape-oriented virtual machine** implemented in C++. Inspired by Turing machines, Brainfuck, stack VMs, and symbolic execution engines. Source files may use `.intense` or `.in10s`.
 
 ## Build & Run
 
 ```bash
 make                                              # compiles → intense.out
-./intense.out <file.intense> [entry=main] [tapes=4] [--debug] [--step]
-./intense.out --repl [file.intense|file.in10] [tapes=4] [--debug]
+./intense.out <file.intense|file.in10s> [entry=main] [tapes=4] [--debug] [--step]
+./intense.out --repl [file.intense|file.in10s] [tapes=4] [--debug]
 ```
 
-REPL mode executes one symbolic instruction at a time, prints the active tape after each step with the active head marked, supports `PRINT_TAPE n` for inspecting another tape, and asks on exit whether to save the entered instruction history as a `.in10` file.
+REPL mode executes one symbolic instruction at a time, prints the active tape after each step with the active head marked, supports `PRINT_TAPE n` for inspecting another tape, and asks on exit whether to save the entered instruction history as a `.in10s` file.
 
 ## Architecture — One Sentence Each
 
