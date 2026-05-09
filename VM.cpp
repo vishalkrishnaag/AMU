@@ -10,6 +10,8 @@
 #include <iomanip>
 #include <stdexcept>
 #include <numeric>
+#include <set>
+#include <vector>
 
 // ---------------------------------------------------------------------------
 // Internal helpers (anonymous namespace)
@@ -62,6 +64,18 @@ std::string trimStr(const std::string& s) {
     if (start == std::string::npos) return "";
     size_t end = s.find_last_not_of(" \t\r\n");
     return s.substr(start, end - start + 1);
+}
+
+std::string fitColumn(std::string text, size_t width) {
+    if (text.size() > width) {
+        if (width > 3)
+            text = text.substr(0, width - 3) + "...";
+        else
+            text = text.substr(0, width);
+    }
+    if (text.size() < width)
+        text += std::string(width - text.size(), ' ');
+    return text;
 }
 
 std::string unescapeString(const std::string& input) {
@@ -451,6 +465,20 @@ std::string stringifyValue(const Value& value) {
     }
 }
 
+std::string compactDisplayValue(const Value& value, size_t maxWidth = 14) {
+    std::string out = stringifyValue(value);
+    for (char& c : out) {
+        if (c == '\n' || c == '\r' || c == '\t')
+            c = ' ';
+    }
+
+    if (out.size() <= maxWidth)
+        return out;
+    if (maxWidth <= 3)
+        return out.substr(0, maxWidth);
+    return out.substr(0, maxWidth - 3) + "...";
+}
+
 // ---- Equality (strict type-and-value match) --------------------------------
 
 bool valuesEqual(const Value& a, const Value& b) {
@@ -578,6 +606,75 @@ void VM::debug(const Instruction& ins) {
         std::cout.flush();
         std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
     }
+}
+
+std::string VM::tapeSnapshot(int radius) const {
+    const int windowRadius = std::max(1, radius);
+    const size_t cellWidth = 12;
+    const size_t maxOffscreenCells = 6;
+
+    std::ostringstream out;
+    out << "\nTAPES active=tape" << activeTape << " count=" << tapes.size() << "\n";
+
+    for (size_t t = 0; t < tapes.size(); ++t) {
+        const Tape& tape = tapes[t];
+        const long long start = tape.ptr - windowRadius;
+        const long long end = tape.ptr + windowRadius;
+
+        out << (static_cast<int>(t) == activeTape ? "=> " : "   ")
+            << "tape" << t
+            << " ptr=" << tape.ptr
+            << " cells=" << tape.length();
+
+        if (tape.cells.empty()) {
+            out << " empty";
+        }
+        out << "\n";
+
+        out << "      idx ";
+        for (long long pos = start; pos <= end; ++pos)
+            out << fitColumn(std::to_string(pos), cellWidth);
+        out << "\n";
+
+        out << "      val ";
+        for (long long pos = start; pos <= end; ++pos) {
+            auto it = tape.cells.find(pos);
+            std::string cell = it == tape.cells.end()
+                ? "."
+                : compactDisplayValue(it->second, cellWidth - 2);
+            out << fitColumn(cell, cellWidth);
+        }
+        out << "\n";
+
+        out << "      head";
+        for (long long pos = start; pos <= end; ++pos)
+            out << fitColumn(pos == tape.ptr ? "^" : "", cellWidth);
+        out << "\n";
+
+        std::vector<long long> offscreen;
+        for (const auto& [pos, _] : tape.cells) {
+            if (pos < start || pos > end)
+                offscreen.push_back(pos);
+        }
+        std::sort(offscreen.begin(), offscreen.end());
+
+        if (!offscreen.empty()) {
+            out << "      off-window ";
+            size_t shown = std::min(maxOffscreenCells, offscreen.size());
+            for (size_t i = 0; i < shown; ++i) {
+                long long pos = offscreen[i];
+                out << "[" << pos << ":"
+                    << compactDisplayValue(tape.cells.at(pos), 18) << "]";
+                if (i + 1 < shown)
+                    out << " ";
+            }
+            if (offscreen.size() > shown)
+                out << " ... +" << (offscreen.size() - shown) << " more";
+            out << "\n";
+        }
+    }
+
+    return out.str();
 }
 
 // ---------------------------------------------------------------------------
@@ -816,6 +913,50 @@ void VM::execute(const Instruction& ins) {
                        [](unsigned char c) { return std::tolower(c); });
     }
 
+    // ---- NLP service operations ------------------------------------------
+    // Core tape NLP: tokenization, analysis, similarity, diff, and transparent
+    // lexicon sentiment. NLPLOAD is a compatibility hook for future backends.
+
+    else if (ins.opcode == "NLPLOAD") {
+        std::string path = ins.args.empty()
+            ? stringifyValue(tape.current())
+            : stringifyValue(parseValue(argOrThrow(ins, 0)));
+        tape.current() = Value(nlp.loadModel(path));
+    }
+    else if (ins.opcode == "NLPTOKENS") {
+        tape.current() = Value(nlp.tokenize(stringifyValue(tape.current())));
+    }
+    else if (ins.opcode == "NLPANALYZE") {
+        tape.current() = Value(nlp.analyze(stringifyValue(tape.current())));
+    }
+    else if (ins.opcode == "NLPSIM") {
+        long long otherCell = std::stoll(argOrThrow(ins, 0));
+        bool forceTokenMode = false;
+        if (ins.args.size() > 1) {
+            std::string mode = toUpperStr(stringifyValue(parseValue(ins.args[1])));
+            forceTokenMode = mode == "TOKEN" || mode == "TOKENS";
+        }
+        std::string left = stringifyValue(tape.current());
+        std::string right = stringifyValue(tape.cells[otherCell]);
+        tape.current() = Value(nlp.similarity(left, right, forceTokenMode));
+    }
+    else if (ins.opcode == "NLPDIFF") {
+        long long otherCell = std::stoll(argOrThrow(ins, 0));
+        std::string left = stringifyValue(tape.current());
+        std::string right = stringifyValue(tape.cells[otherCell]);
+        tape.current() = Value(nlp.diff(left, right));
+    }
+    else if (ins.opcode == "NLPPREDICT") {
+        int k = ins.args.size() > 0 ? std::stoi(ins.args[0]) : 1;
+        double threshold = ins.args.size() > 1 ? std::stod(ins.args[1]) : 0.0;
+        tape.current() = Value(nlp.predict(stringifyValue(tape.current()), k, threshold));
+    }
+    else if (ins.opcode == "NLPSENTIMENT") {
+        int k = ins.args.size() > 0 ? std::stoi(ins.args[0]) : 1;
+        double threshold = ins.args.size() > 1 ? std::stod(ins.args[1]) : 0.0;
+        tape.current() = Value(nlp.sentiment(stringifyValue(tape.current()), k, threshold));
+    }
+
     // ---- I/O: stdin -------------------------------------------------------
 
     else if (ins.opcode == "INPUT") {
@@ -876,6 +1017,37 @@ void VM::execute(const Instruction& ins) {
             throw std::runtime_error(ins.opcode + ": current cell must be Code or Str, got " +
                                      kindName(tape.current().kind()));
         }
+    }
+    else if (ins.opcode == "TRY") {
+        auto* tryCode = std::get_if<Code>(&tape.current().data);
+        if (!tryCode)
+            throw std::runtime_error("TRY: current cell must be Code");
+
+        Code tryCopy = *tryCode;
+        try {
+            runBlock(tryCopy);
+        } catch (const std::exception& e) {
+            Map err;
+            err["error"] = Value(std::string(e.what()));
+            err["handled"] = Value(false);
+            tape.current() = Value(std::move(err));
+
+            if (!ins.args.empty()) {
+                long long catchCell = std::stoll(argOrThrow(ins, 0));
+                auto* catchCode = std::get_if<Code>(&tape.cells[catchCell].data);
+                if (!catchCode)
+                    throw std::runtime_error("TRY: catch cell must contain Code");
+                std::get<Map>(tape.current().data)["handled"] = Value(true);
+                Code catchCopy = *catchCode;
+                runBlock(catchCopy);
+            }
+        }
+    }
+    else if (ins.opcode == "RAISE") {
+        std::string message = ins.args.empty()
+            ? stringifyValue(tape.current())
+            : stringifyValue(parseValue(argOrThrow(ins, 0)));
+        throw std::runtime_error(message);
     }
 
     // ---- Homoiconic: MATCH ------------------------------------------------

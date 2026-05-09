@@ -11,6 +11,7 @@ A symbolic tape-oriented virtual machine inspired by Turing machines, Brainfuck 
 ```bash
 make
 ./intense.out <file.intense> [entry=main] [tapes=4] [--debug] [--step]
+./intense.out --repl [file.intense|file.in10] [tapes=4] [--debug]
 ```
 
 Examples:
@@ -18,7 +19,10 @@ Examples:
 ./intense.out example.intense
 ./intense.out examples/test_ml.intense main 8
 ./intense.out examples/test_types.intense main --debug
+./intense.out --repl
 ```
+
+REPL mode accepts one symbolic instruction per line, shows the active tape head after each step, and can save the entered session as a `.in10` file on exit.
 
 ---
 
@@ -205,6 +209,32 @@ Operate on a List of numbers in the current cell.
 | Instruction         | Description |
 |---------------------|-------------|
 | `KMEANS k [iters]`  | 1-D k-means on List; stores List of `k` centroids. Default 100 iterations |
+
+### NLP — Text Service
+
+NLP is implemented as core tape-native text analysis by default. The machine does not depend on an archived NLP framework.
+`NLPLOAD` is retained as a compatibility hook for future optional backends, but the default backend stays deterministic and local.
+
+| Instruction              | Description |
+|--------------------------|-------------|
+| `NLPLOAD [path]`         | Store backend status for a future external NLP model path; default backend remains core |
+| `NLPTOKENS`              | Tokenize current text/code cell into lowercase token list |
+| `NLPANALYZE`             | Store text/code stats map: chars, lines, tokens, unique tokens, instruction-like lines |
+| `NLPSIM cell [TOKEN]`    | Compare current text with text at tape `cell` using token cosine similarity |
+| `NLPDIFF cell`           | Store map with similarity, distance, shared, left-only, and right-only tokens |
+| `NLPPREDICT [k] [thr]`   | Classify current text using the core lexicon classifier; stores `[[label, score], ...]` |
+| `NLPSENTIMENT [k] [thr]` | Store transparent lexicon sentiment: label, score, polarity, hits, predictions |
+
+### Assembly-Level Error Handling
+
+Errors are represented as tape values when caught. `TRY` executes the Code stored in the current cell.
+If execution throws and a catch cell is provided, the current cell is replaced with an error map such as
+`{"error":"DIV by zero","handled":true}`, then the catch Code cell is executed.
+
+| Instruction        | Description |
+|--------------------|-------------|
+| `TRY [catchCell]`  | Execute current Code cell; on error, optionally execute Code stored at `catchCell` |
+| `RAISE [message]`  | Throw an assembly-level error using `message`, or the current cell if omitted |
 
 ### Function Calls
 

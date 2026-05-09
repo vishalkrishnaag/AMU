@@ -3,7 +3,7 @@ CXXFLAGS = -std=c++17 -O3 -march=native
 CPPFLAGS = -Ithird_party/eigen -I/usr/include/eigen3
 LDFLAGS =
 
-SRC = main.cpp VM.cpp Lexer.cpp Parser.cpp FunctionLoader.cpp
+SRC = main.cpp VM.cpp Lexer.cpp Parser.cpp FunctionLoader.cpp NlpService.cpp
 TARGET = intense.out
 
 EIGEN_VERSION = 3.4.0

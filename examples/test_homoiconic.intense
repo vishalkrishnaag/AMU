@@ -9,6 +9,10 @@ main:
     CALL test_match_structure
     CALL test_code_manipulation
     CALL test_dynamic_generation
+    CALL test_tape_order_code_and_data
+    CALL test_code_injection_with_call
+    CALL test_self_modify_across_cells
+    CALL test_try_catch_code_block
     RET
 
 # ---- EXEC: execute a Code cell in place ----
@@ -165,4 +169,79 @@ test_dynamic_generation:
     BACK 1
     CODESET 0 1       # patch SET 100 → SET 777
     EXEC              # → 777
+    RET
+
+# ---- Tape order: code and data coexist in navigable cells ------------------
+test_tape_order_code_and_data:
+    SEEK 0
+    SET "data-before"
+    MOVE 1
+    SET (SET "executed-from-cell-1" ; PRINT)
+    MOVE 1
+    SET ["data-after", 3]
+
+    BACK 1
+    TYPE
+    PRINT             # → code
+    SET (SET "executed-from-cell-1" ; PRINT)
+
+    BACK 1
+    PRINT             # → data-before
+
+    MOVE 2
+    PRINT             # → [data-after,3]
+
+    SEEK 1
+    EXEC              # → executed-from-cell-1
+    RET
+
+# ---- Inject a Code value through argument cells and CALL from inside it -----
+test_code_injection_with_call:
+    SEEK 0
+    SET (SETARG 0 "from injected code" ; CALL injected_printer)
+    MOVE 2
+    SET "sentinel-data"
+    BACK 2
+    SETARG 0          # pass current Code cell as argument
+    CALL run_injected_code
+    MOVE 2
+    PRINT             # → sentinel-data
+    RET
+
+run_injected_code:
+    GETARG 0
+    EXEC
+    RET
+
+injected_printer:
+    GETARG 0
+    PRINT
+    RET
+
+# ---- Self modification across cells before execution -----------------------
+test_self_modify_across_cells:
+    SEEK 0
+    SET (SET "original" ; PRINT ; MOVE 1 ; SET "code-finished")
+    MOVE 1
+    SET ["SET", "patched"]
+    MOVE 1
+    SET ["PRINT"]
+    BACK 2
+    CODESET 0 1       # replace SET "original" with SET "patched"
+    CODEAPPEND 2      # append one more PRINT instruction from cell 2
+    EXEC              # → patched, code-finished
+    BACK 1
+    PRINT             # → patched
+    MOVE 1
+    PRINT             # → code-finished
+    RET
+
+# ---- Assembly-level exception handling over executable tape cells ----------
+test_try_catch_code_block:
+    SEEK 0
+    SET (SET 10 ; DIV 0 ; SET "unreachable")
+    MOVE 1
+    SET (PRINTJ ; SET "recovered from symbolic error" ; PRINT)
+    BACK 1
+    TRY 1             # catch block sees error map in current cell
     RET

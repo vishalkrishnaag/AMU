@@ -2,6 +2,36 @@
 
 Design a C++ interpreter for a symbolic multi-tape computational machine inspired by Turing machines, but NOT based on finite-state transitions or CPU/VM architecture.
 
+Foundational Identity
+---------------------
+This system must always be understood as a modified symbolic Turing machine, not as a conventional VM.
+
+Implementation files may use names such as `VM` for historical or practical reasons, but the conceptual machine is:
+- a symbolic tape machine
+- a modified Turing machine
+- a tape-rewrite computation system
+
+It does NOT contain:
+- registers
+- accumulators
+- bytecode execution
+- binary-code execution
+- CPU-style fetch/decode/execute semantics
+- separate program memory versus data memory
+
+It accepts symbolic values on tapes and produces results by transforming tapes.
+
+The output of computation is the resulting tape state:
+- current cell contents
+- mutated tape regions
+- generated symbolic values
+- executable or quoted code stored on tape
+- analysis results stored back into tape cells
+
+Every feature, including math, ML, NLP, file I/O, and reflective execution, must preserve this rule:
+
+> external libraries may accelerate or enrich transformations, but they must act as services behind symbolic tape instructions; they must never redefine the machine as a register VM, bytecode runtime, or conventional programming language runtime.
+
 Core Philosophy
 ----------------
 This machine is NOT:
