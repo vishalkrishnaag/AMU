@@ -11,6 +11,7 @@
 #include <stdexcept>
 #include <numeric>
 #include <vector>
+#include <unistd.h>
 
 // ---------------------------------------------------------------------------
 // Internal helpers (anonymous namespace)
@@ -604,6 +605,12 @@ void VM::debug(const Instruction& ins) {
         std::cout << "Press Enter to step...";
         std::cout.flush();
         std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+        if (isatty(STDIN_FILENO)) {
+            std::cout << "\r\033[2K";
+        } else {
+            std::cout << "\n";
+        }
+        std::cout.flush();
     }
 }
 

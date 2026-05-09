@@ -26,13 +26,18 @@ static std::string trim(std::string s) {
     return s.substr(start);
 }
 
+static bool isIntenseSource(const std::filesystem::path& path) {
+    auto ext = path.extension().string();
+    return ext == ".intense" || ext == ".in10s";
+}
+
 void FunctionLoader::loadFile() {
     std::filesystem::path root(filename);
 
     if (std::filesystem::is_directory(root)) {
         for (auto& entry : std::filesystem::recursive_directory_iterator(root)) {
             if (!entry.is_regular_file()) continue;
-            if (entry.path().extension() == ".intense")
+            if (isIntenseSource(entry.path()))
                 loadFileFromPath(entry.path());
         }
     } else {
@@ -73,7 +78,7 @@ void FunctionLoader::importPath(const std::string& importTarget, const std::file
     if (std::filesystem::is_directory(target)) {
         for (auto& entry : std::filesystem::recursive_directory_iterator(target)) {
             if (!entry.is_regular_file()) continue;
-            if (entry.path().extension() == ".intense")
+            if (isIntenseSource(entry.path()))
                 loadFileFromPath(entry.path());
         }
         return;
@@ -81,11 +86,16 @@ void FunctionLoader::importPath(const std::string& importTarget, const std::file
 
     if (!std::filesystem::exists(target)) {
         std::filesystem::path fallback = target;
-        fallback.replace_extension(".intense");
-        if (std::filesystem::exists(fallback))
+        fallback.replace_extension(".in10s");
+        if (std::filesystem::exists(fallback)) {
             target = fallback;
-        else
-            throw std::runtime_error("Imported file not found: " + target.string());
+        } else {
+            fallback.replace_extension(".intense");
+            if (std::filesystem::exists(fallback))
+                target = fallback;
+            else
+                throw std::runtime_error("Imported file not found: " + target.string());
+        }
     }
 
     loadFileFromPath(target);

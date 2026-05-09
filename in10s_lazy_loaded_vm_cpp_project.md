@@ -10,8 +10,8 @@ A symbolic tape-oriented virtual machine inspired by Turing machines, Brainfuck 
 
 ```bash
 make
-./intense.out <file.intense> [entry=main] [tapes=4] [--debug] [--step]
-./intense.out --repl [file.intense|file.in10] [tapes=4] [--debug]
+./intense.out <file.intense|file.in10s> [entry=main] [tapes=4] [--debug] [--step]
+./intense.out --repl [file.intense|file.in10s] [tapes=4] [--debug]
 ```
 
 Examples:
@@ -22,7 +22,7 @@ Examples:
 ./intense.out --repl
 ```
 
-REPL mode accepts one symbolic instruction per line, shows the active tape head after each step, and can save the entered session as a `.in10` file on exit.
+REPL mode accepts one symbolic instruction per line, shows the active tape head after each step, and can save the entered session as a `.in10s` file on exit. Both `.intense` and `.in10s` are valid source extensions.
 
 ---
 
