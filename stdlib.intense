@@ -190,6 +190,70 @@ manhattan_distance:
     RET
 
 # ============================================================================
+# NLP OPERATIONS (core tape-native text analysis)
+# ============================================================================
+
+# nlp_load(model_path): compatibility hook for future external NLP backends
+# Args: SETARG 0 model path
+# Output: current cell = backend status map; default backend remains core
+nlp_load:
+    GETARG 0
+    NLPLOAD
+    RET
+
+# nlp_tokens(text): tokenize text into normalized lowercase tokens
+# Args: SETARG 0 text
+# Output: current cell = token list
+nlp_tokens:
+    GETARG 0
+    NLPTOKENS
+    RET
+
+# nlp_analyze(text_or_code): inspect text/code shape
+# Args: SETARG 0 text or code
+# Output: map with chars, lines, tokens, unique_tokens, instruction_like_lines
+nlp_analyze:
+    GETARG 0
+    NLPANALYZE
+    RET
+
+# nlp_similarity(left, right): similarity between two text cells
+# Args: SETARG 0 left text, SETARG 1 right text
+# Output: current cell = cosine similarity
+nlp_similarity:
+    GETARG 1
+    MOVE 1
+    GETARG 0
+    NLPSIM 0
+    RET
+
+# nlp_difference(left, right): shared and different tokens between two texts
+# Args: SETARG 0 left text, SETARG 1 right text
+# Output: map with similarity, distance, shared, left_only, right_only
+nlp_difference:
+    GETARG 1
+    MOVE 1
+    GETARG 0
+    NLPDIFF 0
+    RET
+
+# nlp_predict(text): classify text using the core tape NLP classifier
+# Args: SETARG 0 text
+# Output: current cell = [[label,score], ...]
+nlp_predict:
+    GETARG 0
+    NLPPREDICT 1
+    RET
+
+# nlp_sentiment(text): transparent lexicon sentiment classification
+# Args: SETARG 0 text
+# Output: map with label, score, polarity, predictions
+nlp_sentiment:
+    GETARG 0
+    NLPSENTIMENT 1
+    RET
+
+# ============================================================================
 # PROBABILITY AND SAMPLING
 # ============================================================================
 

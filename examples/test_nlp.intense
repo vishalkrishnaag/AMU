@@ -1,0 +1,49 @@
+# Test: NLP tape instructions
+# Run: ./intense.out examples/test_nlp.intense main
+
+IMPORT ../stdlib.intense
+
+main:
+    CALL test_tokens
+    CALL test_similarity
+    CALL test_difference
+    CALL test_analyze
+    CALL test_stdlib_wrappers
+    RET
+
+test_tokens:
+    SET "Tape cells can store symbolic text, code, and data."
+    NLPTOKENS
+    PRINT
+    RET
+
+test_similarity:
+    SET "symbolic tape cells store text data"
+    MOVE 1
+    SET "text data lives inside symbolic tape cells"
+    BACK 1
+    NLPSIM 1 TOKEN
+    PRINT
+    RET
+
+test_difference:
+    SET "code rewrites symbolic tape cells"
+    MOVE 1
+    SET "nlp compares symbolic text cells"
+    BACK 1
+    NLPDIFF 1
+    PRINTJ
+    RET
+
+test_analyze:
+    SET (MOVE 1 ; SET "hello" ; PRINT)
+    NLPANALYZE
+    PRINTJ
+    RET
+
+test_stdlib_wrappers:
+    SETARG 0 "happy symbolic machines"
+    SETARG 1 "symbolic machines reason over text"
+    CALL nlp_similarity
+    PRINT
+    RET

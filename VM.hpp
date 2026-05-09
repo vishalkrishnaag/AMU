@@ -2,6 +2,7 @@
 
 #include "Tape.hpp"
 #include "FunctionLoader.hpp"
+#include "NlpService.hpp"
 #include <stack>
 
 struct Frame {
@@ -18,6 +19,7 @@ private:
     bool debugMode = false;
     bool stepMode = false;
     FunctionLoader loader;
+    NlpService nlp;
     std::stack<Frame> callStack;
     std::vector<Value> argRegs;     // argument register file for SETARG/GETARG
 
@@ -33,5 +35,6 @@ public:
     void runBlock(const Code& code);
     void execute(const Instruction& ins);
     void debug(const Instruction& ins);
+    std::string tapeSnapshot(int radius = 3) const;
     void setStepMode(bool enable) { stepMode = enable; }
 };

@@ -14,7 +14,10 @@ A **symbolic tape-oriented virtual machine** implemented in C++. Inspired by Tur
 ```bash
 make                                              # compiles → intense.out
 ./intense.out <file.intense> [entry=main] [tapes=4] [--debug] [--step]
+./intense.out --repl [file.intense|file.in10] [tapes=4] [--debug]
 ```
+
+REPL mode executes one symbolic instruction at a time, prints all tapes after each step with the active head marked, and asks on exit whether to save the entered instruction history as a `.in10` file.
 
 ## Architecture — One Sentence Each
 
@@ -54,13 +57,14 @@ Type sys: `TYPE`, `CAST`
 Arithmetic: `ADD`, `SUB`, `MUL`, `DIV`, `MOD`, `ABS`, `NEG` — binary ops accept literal or `@N`; unary ops work on current cell  
 Strings: `CONCAT`, `SPLIT`, `SUBSTR`, `FIND`, `REPLACE`, `UPPER`, `LOWER`  
 File I/O: `READFILE`, `WRITEFILE`, `INPUT`  
-Homoiconic: `EXEC`, `EVAL`, `QUOTE`, `MATCH`  
+Homoiconic: `EXEC`, `EVAL`, `QUOTE`, `MATCH`, `TRY`, `RAISE`  
 Control flow: `JMP @label`, `JMPIF @label`, `JMPNOT @label`  
 Code manip: `CODELEN`, `CODEGET`, `CODESET`, `CODEAPPEND`, `APPEND`  
 ML stats: `MEANVAL`, `STDDEV`, `NORMALIZE`, `ZSCORE`, `SOFTMAX`  
 ML linalg: `DOTPROD`  
 ML supervised: `LINEARREG`, `PREDICT`  
 ML clustering: `KMEANS`  
+NLP service: `NLPLOAD`, `NLPTOKENS`, `NLPANALYZE`, `NLPSIM`, `NLPDIFF`, `NLPPREDICT`, `NLPSENTIMENT`  
 Control: `CALL`, `ARG`, `RET`, `IMPORT`  
 Arg passing: `SETARG`, `GETARG`, `CLEARARGS`, `ARGCOUNT`
 
