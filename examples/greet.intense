@@ -1,0 +1,36 @@
+IMPORT ../stdlib.intense
+
+greet:
+    GETARG 0
+    PRINT
+    GETARG 1
+    PRINT
+    GETARG 2
+    PRINT    
+    RET
+
+main:
+ SETARG 0 "hello "
+ SETARG 2 "\n"
+ SETARG 1 23
+ SEEK 0
+ SET "vibe"
+ MOVE 1
+ SET "is it working ?"
+ #testing 
+ BACK 1 
+ SET "claui"
+ PRINT
+ MOVE 1
+ PRINT
+ SETARG 1 " vishal"
+ call greet
+ SETARG 0 20
+ SETARG 1 20
+ SET 200
+ MOVE 1
+ SET 100
+ ADD 10
+ PRINT
+ SET 0
+ RET

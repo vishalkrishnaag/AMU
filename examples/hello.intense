@@ -1,0 +1,8 @@
+main:
+    CALL hello
+    RET
+
+hello:
+    SET imported_hello
+    PRINT
+    RET

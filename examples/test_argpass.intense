@@ -1,0 +1,88 @@
+# Test: tape-oriented argument passing via SETARG / GETARG
+# Run: ./intense.out examples/test_argpass.intense main
+
+main:
+    CALL test_basic_args
+    CALL test_complex_arg
+    CALL test_nested_calls
+    CALL test_argcount
+    RET
+
+# ---- Basic SETARG / GETARG ----
+test_basic_args:
+    SETARG 0 "hello"
+    SETARG 1 42
+    SETARG 2 true
+    CALL show_args
+    RET
+
+show_args:
+    GETARG 0
+    PRINT             # → hello
+    GETARG 1
+    PRINT             # → 42
+    GETARG 2
+    PRINT             # → true
+    RET
+
+# ---- Passing a code block as an argument ----
+test_complex_arg:
+    # SETARG 0 with a code block literal
+    SETARG 0 (SET 77 ; PRINT)
+    CALL execute_arg
+
+    # SETARG 0 from current cell (no literal — computed value)
+    SET [10, 20, 30]
+    SETARG 0          # copies current cell to arg 0
+    CALL print_list
+    RET
+
+execute_arg:
+    GETARG 0
+    TYPE
+    PRINT             # → code
+    GETARG 0
+    EXEC              # → 77
+    RET
+
+print_list:
+    GETARG 0
+    PRINT             # → [10,20,30]
+    RET
+
+# ---- Nested calls: each call gets fresh arg registers ----
+# outer sets arg 0 = "outer", inner sets arg 0 = "inner"
+# after inner returns, outer's arg 0 is restored
+test_nested_calls:
+    SETARG 0 "outer"
+    CALL outer_fn
+    # arg 0 is restored to "outer" after outer_fn returns
+    GETARG 0
+    PRINT             # → outer
+    RET
+
+outer_fn:
+    GETARG 0
+    PRINT             # → outer
+    # inner call uses its own arg registers
+    SETARG 0 "inner"
+    CALL inner_fn
+    # caller's arg registers are not visible here (already saved at CALL time)
+    RET
+
+inner_fn:
+    GETARG 0
+    PRINT             # → inner
+    RET
+
+# ---- ARGCOUNT and CLEARARGS ----
+test_argcount:
+    SETARG 0 "a"
+    SETARG 1 "b"
+    SETARG 2 "c"
+    ARGCOUNT
+    PRINT             # → 3
+    CLEARARGS
+    ARGCOUNT
+    PRINT             # → 0
+    RET
