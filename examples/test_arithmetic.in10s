@@ -1,5 +1,5 @@
 # Test: Arithmetic operations, type promotion, and edge cases
-# Run: ./intense.out examples/test_arithmetic.intense main
+# Run: ./intense.out examples/test_arithmetic.in10s
 
 main:
     CALL test_int_arith

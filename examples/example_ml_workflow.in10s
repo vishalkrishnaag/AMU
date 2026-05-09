@@ -1,7 +1,7 @@
 # Example: ML workflow using stdlib — linear regression on synthetic data
 # Run: ./intense.out examples/example_ml_workflow.intense main
 
-IMPORT ../stdlib.intense
+IMPORT ../stdlib.in10s
 
 main:
     CALL create_synthetic_data

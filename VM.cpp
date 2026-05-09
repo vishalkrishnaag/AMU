@@ -10,7 +10,6 @@
 #include <iomanip>
 #include <stdexcept>
 #include <numeric>
-#include <set>
 #include <vector>
 
 // ---------------------------------------------------------------------------
@@ -608,70 +607,76 @@ void VM::debug(const Instruction& ins) {
     }
 }
 
-std::string VM::tapeSnapshot(int radius) const {
+std::string VM::tapeSnapshot(int radius, int tapeIndex) const {
     const int windowRadius = std::max(1, radius);
     const size_t cellWidth = 12;
     const size_t maxOffscreenCells = 6;
 
+    int shownTape = tapeIndex < 0 ? activeTape : tapeIndex;
+    if (shownTape < 0 || shownTape >= static_cast<int>(tapes.size()))
+        throw std::runtime_error("PRINT_TAPE index out of bounds: " + std::to_string(shownTape));
+
     std::ostringstream out;
-    out << "\nTAPES active=tape" << activeTape << " count=" << tapes.size() << "\n";
+    out << "\nTAPE active=tape" << activeTape
+        << " showing=tape" << shownTape
+        << " count=" << tapes.size() << "\n";
 
-    for (size_t t = 0; t < tapes.size(); ++t) {
-        const Tape& tape = tapes[t];
-        const long long start = tape.ptr - windowRadius;
-        const long long end = tape.ptr + windowRadius;
+    const Tape& tape = tapes[shownTape];
+    long long start = tape.ptr - windowRadius;
+    if (tape.ptr >= 0 && start < 0)
+        start = 0;
+    const long long end = start + (windowRadius * 2);
 
-        out << (static_cast<int>(t) == activeTape ? "=> " : "   ")
-            << "tape" << t
-            << " ptr=" << tape.ptr
-            << " cells=" << tape.length();
+    out << (shownTape == activeTape ? "=> " : "   ")
+        << "tape" << shownTape
+        << " ptr=" << tape.ptr
+        << " cells=" << tape.length();
 
-        if (tape.cells.empty()) {
-            out << " empty";
+    if (tape.cells.empty()) {
+        out << " empty";
+    }
+    out << "\n";
+
+    out << "      idx ";
+    for (long long pos = start; pos <= end; ++pos)
+        out << fitColumn(std::to_string(pos), cellWidth);
+    out << "\n";
+
+    out << "      val ";
+    for (long long pos = start; pos <= end; ++pos) {
+        auto it = tape.cells.find(pos);
+        std::string cell = it == tape.cells.end()
+            ? "."
+            : compactDisplayValue(it->second, cellWidth - 2);
+        out << fitColumn(cell, cellWidth);
+    }
+    out << "\n";
+
+    out << "      head";
+    for (long long pos = start; pos <= end; ++pos)
+        out << fitColumn(pos == tape.ptr ? "^" : "", cellWidth);
+    out << "\n";
+
+    std::vector<long long> offscreen;
+    for (const auto& [pos, _] : tape.cells) {
+        if (pos < start || pos > end)
+            offscreen.push_back(pos);
+    }
+    std::sort(offscreen.begin(), offscreen.end());
+
+    if (!offscreen.empty()) {
+        out << "      off-window ";
+        size_t shown = std::min(maxOffscreenCells, offscreen.size());
+        for (size_t i = 0; i < shown; ++i) {
+            long long pos = offscreen[i];
+            out << "[" << pos << ":"
+                << compactDisplayValue(tape.cells.at(pos), 18) << "]";
+            if (i + 1 < shown)
+                out << " ";
         }
+        if (offscreen.size() > shown)
+            out << " ... +" << (offscreen.size() - shown) << " more";
         out << "\n";
-
-        out << "      idx ";
-        for (long long pos = start; pos <= end; ++pos)
-            out << fitColumn(std::to_string(pos), cellWidth);
-        out << "\n";
-
-        out << "      val ";
-        for (long long pos = start; pos <= end; ++pos) {
-            auto it = tape.cells.find(pos);
-            std::string cell = it == tape.cells.end()
-                ? "."
-                : compactDisplayValue(it->second, cellWidth - 2);
-            out << fitColumn(cell, cellWidth);
-        }
-        out << "\n";
-
-        out << "      head";
-        for (long long pos = start; pos <= end; ++pos)
-            out << fitColumn(pos == tape.ptr ? "^" : "", cellWidth);
-        out << "\n";
-
-        std::vector<long long> offscreen;
-        for (const auto& [pos, _] : tape.cells) {
-            if (pos < start || pos > end)
-                offscreen.push_back(pos);
-        }
-        std::sort(offscreen.begin(), offscreen.end());
-
-        if (!offscreen.empty()) {
-            out << "      off-window ";
-            size_t shown = std::min(maxOffscreenCells, offscreen.size());
-            for (size_t i = 0; i < shown; ++i) {
-                long long pos = offscreen[i];
-                out << "[" << pos << ":"
-                    << compactDisplayValue(tape.cells.at(pos), 18) << "]";
-                if (i + 1 < shown)
-                    out << " ";
-            }
-            if (offscreen.size() > shown)
-                out << " ... +" << (offscreen.size() - shown) << " more";
-            out << "\n";
-        }
     }
 
     return out.str();
@@ -769,6 +774,10 @@ void VM::execute(const Instruction& ins) {
         if (target < 0 || target >= static_cast<int>(tapes.size()))
             throw std::runtime_error("TAPE index out of bounds: " + std::to_string(target));
         activeTape = target;
+    }
+    else if (ins.opcode == "PRINT_TAPE") {
+        int target = std::stoi(argOrThrow(ins, 0));
+        std::cout << tapeSnapshot(3, target);
     }
     else if (ins.opcode == "LEN" || ins.opcode == "LENGTH") {
         tape.current() = Value(static_cast<long long>(tape.length()));

@@ -97,6 +97,7 @@ Resolved relative to the importing file. Circular imports are detected and skipp
 | `MOVE n`    | Move tape pointer forward by `n` cells |
 | `BACK n`    | Move tape pointer backward by `n` cells |
 | `TAPE n`    | Switch active tape to index `n` |
+| `PRINT_TAPE n` | Print tape `n` without switching the active tape |
 
 ### Cell Operations
 

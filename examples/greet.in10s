@@ -1,4 +1,4 @@
-IMPORT ../stdlib.intense
+IMPORT ../stdlib.in10s
 
 greet:
     GETARG 0
