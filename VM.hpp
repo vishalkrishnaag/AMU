@@ -1,0 +1,37 @@
+#pragma once
+
+#include "Tape.hpp"
+#include "FunctionLoader.hpp"
+#include <stack>
+
+struct Frame {
+    std::string functionName;
+    size_t pc = 0;
+    std::vector<Value> args;        // old inline-arg system (ARG n)
+    std::vector<Value> savedArgRegs; // snapshot of argRegs taken at CALL time
+};
+
+class VM {
+private:
+    std::vector<Tape> tapes;
+    int activeTape = 0;
+    bool debugMode = false;
+    bool stepMode = false;
+    FunctionLoader loader;
+    std::stack<Frame> callStack;
+    std::vector<Value> argRegs;     // argument register file for SETARG/GETARG
+
+public:
+    VM(
+        const std::string& file,
+        int tapeCount,
+        bool debug,
+        bool step = false
+    );
+
+    void run(const std::string& entry);
+    void runBlock(const Code& code);
+    void execute(const Instruction& ins);
+    void debug(const Instruction& ins);
+    void setStepMode(bool enable) { stepMode = enable; }
+};

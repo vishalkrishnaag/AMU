@@ -1,0 +1,168 @@
+# Test: homoiconic features — EXEC, EVAL, QUOTE, MATCH, APPEND, CODE*
+# Run: ./intense.out examples/test_homoiconic.intense main
+
+main:
+    CALL test_exec
+    CALL test_eval_str
+    CALL test_quote
+    CALL test_match_types
+    CALL test_match_structure
+    CALL test_code_manipulation
+    CALL test_dynamic_generation
+    RET
+
+# ---- EXEC: execute a Code cell in place ----
+test_exec:
+    SEEK 0
+    SET (SET 99 ; PRINT)
+    EXEC              # → 99
+    RET
+
+# ---- EVAL: alias for EXEC, also works on Str cells ----
+test_eval_str:
+    SEEK 0
+    # EVAL on a Code cell — identical to EXEC
+    SET (SET 88 ; PRINT)
+    EVAL              # → 88
+
+    # EVAL on a Str cell: parses and executes the string as a single instruction
+    MOVE 1
+    SET "PRINT"       # cell 1 = string "PRINT"
+    EVAL              # executes PRINT → prints "PRINT"
+    RET
+
+# ---- QUOTE: store instruction(s) as Code without executing ----
+test_quote:
+    SEEK 0
+    # Single instruction form
+    QUOTE PRINT
+    TYPE
+    PRINT             # → code
+
+    # Code block form
+    QUOTE (SET 7 ; PRINT)
+    EXEC              # → 7
+
+    # CODELEN on a quoted block
+    QUOTE (ADD 1 ; MUL 2 ; PRINT)
+    CODELEN
+    PRINT             # → 3
+    RET
+
+# ---- MATCH: type-based pattern matching ----
+test_match_types:
+    SEEK 0
+    SET 42
+    MATCH int
+    PRINT             # → true
+
+    MOVE 1
+    SET 3.14
+    MATCH float
+    PRINT             # → true
+
+    MOVE 1
+    SET "hello"
+    MATCH str
+    PRINT             # → true
+
+    MOVE 1
+    SET true
+    MATCH bool
+    PRINT             # → true
+
+    MOVE 1
+    SET null
+    MATCH nil
+    PRINT             # → true
+
+    # Wildcard _ matches anything
+    MOVE 1
+    SET 99
+    MATCH _
+    PRINT             # → true
+
+    # Wrong type → false
+    MOVE 1
+    SET 42
+    MATCH str
+    PRINT             # → false
+    RET
+
+# ---- MATCH: structural pattern matching ----
+test_match_structure:
+    SEEK 0
+    SET [1, 2, 3]
+    MATCH [_, _, _]
+    PRINT             # → true (any list of 3)
+
+    MOVE 1
+    SET [1, 2, 3]
+    MATCH [_, 2, _]
+    PRINT             # → true (middle element == 2)
+
+    MOVE 1
+    SET [1, 2, 3]
+    MATCH [_, 9, _]
+    PRINT             # → false (middle element != 9)
+
+    MOVE 1
+    SET 42
+    MATCH 42
+    PRINT             # → true
+
+    MOVE 1
+    SET 42
+    MATCH 43
+    PRINT             # → false
+    RET
+
+# ---- Code manipulation: CODEGET, CODESET, CODEAPPEND, CODELEN ----
+test_code_manipulation:
+    SEEK 0
+    # CODEGET: extract instruction as list
+    SET (SET 5 ; PRINT)
+    CODEGET 0
+    PRINT             # → [SET,5]
+
+    # CODELEN
+    SET (SET 5 ; PRINT)
+    CODELEN
+    PRINT             # → 2
+
+    # CODEAPPEND: append instruction from another cell
+    SET (SET 5)
+    MOVE 1
+    SET ["PRINT"]
+    BACK 1
+    CODEAPPEND 1      # append PRINT to Code block at cell 0
+    EXEC              # → 5
+
+    # CODESET: replace an instruction
+    SEEK 0
+    SET (SET 5 ; PRINT)
+    MOVE 1
+    SET ["SET", "99"]
+    BACK 1
+    CODESET 0 1       # replace instruction[0] with SET 99
+    EXEC              # → 99
+    RET
+
+# ---- Dynamic code generation: build and execute a block at runtime ----
+test_dynamic_generation:
+    SEEK 0
+    # Build a block dynamically from scratch
+    SET ()
+    APPEND ["SET", "42"]
+    APPEND ["PRINT"]
+    EXEC              # → 42
+
+    # Patch an existing block before executing
+    SEEK 0
+    SET (SET 100 ; PRINT)
+    MOVE 1
+    SET ["SET", "777"]
+    BACK 1
+    CODESET 0 1       # patch SET 100 → SET 777
+    EXEC              # → 777
+    RET

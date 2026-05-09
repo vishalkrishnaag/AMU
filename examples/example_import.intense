@@ -1,0 +1,6 @@
+IMPORT examples
+
+main:
+    CALL hello
+    CALL greet world
+    RET

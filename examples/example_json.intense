@@ -1,0 +1,19 @@
+main:
+    SET {"name":"Alice","age":30,"active":true,"scores":[95,87.5,92]}
+    PRINT
+    MOVE 1
+    SET 3.14
+    PRINT
+    MOVE 1
+    SET true
+    PRINT
+    MOVE 1
+    SET 'Z'
+    PRINT
+    MOVE 1
+    SET "hello world"
+    PRINT
+    MOVE 1
+    SET [1,2,3,4,5]
+    PRINT
+    RET

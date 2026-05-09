@@ -1,0 +1,63 @@
+# Test: String operations
+# Run: ./intense.out examples/test_strings.intense main
+
+main:
+    CALL test_concat
+    CALL test_split
+    CALL test_find
+    CALL test_replace
+    CALL test_substr
+    CALL test_upper_lower
+    RET
+
+# ---- CONCAT ----
+test_concat:
+    SET "Hello"
+    CONCAT ", World!"
+    PRINT          # → Hello, World!
+    RET
+
+# ---- SPLIT ----
+test_split:
+    SET "one,two,three"
+    SPLIT ","
+    PRINT          # → ["one","two","three"]
+    RET
+
+# ---- FIND: 0-based index, -1 if not found ----
+test_find:
+    SET "Hello World"
+    FIND "World"
+    PRINT          # → 6
+
+    MOVE 1
+    SET "Hello World"
+    FIND "xyz"
+    PRINT          # → -1  (npos cast to long long)
+    RET
+
+# ---- REPLACE ----
+test_replace:
+    SET "foo bar foo baz foo"
+    REPLACE "foo" "qux"
+    PRINT          # → qux bar qux baz qux
+    RET
+
+# ---- SUBSTR ----
+test_substr:
+    SET "Hello World"
+    SUBSTR 6 5
+    PRINT          # → World
+    RET
+
+# ---- UPPER / LOWER ----
+test_upper_lower:
+    SET "Hello World"
+    UPPER
+    PRINT          # → HELLO WORLD
+
+    MOVE 1
+    SET "Hello World"
+    LOWER
+    PRINT          # → hello world
+    RET

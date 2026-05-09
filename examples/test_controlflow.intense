@@ -1,0 +1,76 @@
+# Test: control flow — JMP, JMPIF, JMPNOT and in-function @labels
+# Run: ./intense.out examples/test_controlflow.intense main
+
+main:
+    CALL test_jmp_unconditional
+    CALL test_jmpnot_countdown
+    CALL test_jmpif_branch
+    CALL test_jmpif_not_taken
+    CALL test_nested_call_in_loop
+    RET
+
+# ---- JMP: unconditional jump skips intervening code ----
+test_jmp_unconditional:
+    SET 1
+    JMP @skip
+    SET 999           # must never execute
+@skip:
+    PRINT             # → 1
+    RET
+
+# ---- JMPNOT: countdown loop prints 5 4 3 2 1 ----
+test_jmpnot_countdown:
+    SET 5
+@loop:
+    PRINT             # → 5, 4, 3, 2, 1
+    SUB 1
+    JMPNOT @done      # exit when value reaches 0 (falsy)
+    JMP @loop
+@done:
+    RET
+
+# ---- JMPIF: branch taken when truthy ----
+test_jmpif_branch:
+    SET 1
+    JMPIF @truthy_path
+    SET 0             # skipped
+    PRINT
+    JMP @jmpif_end
+@truthy_path:
+    SET 42
+    PRINT             # → 42
+@jmpif_end:
+    RET
+
+# ---- JMPIF not taken when falsy ----
+test_jmpif_not_taken:
+    SET 0
+    JMPIF @should_skip   # 0 is falsy — jump NOT taken
+    SET 99
+    PRINT             # → 99  (reached because JMPIF didn't fire)
+    JMP @end
+@should_skip:
+    SET 0
+    PRINT             # must never execute
+@end:
+    RET
+
+# ---- CALL inside a loop (3 iterations) ----
+# Key: MOVE 1 before CALL so print_hello operates on cell 1,
+# leaving the counter at cell 0 untouched.
+test_nested_call_in_loop:
+    SET 3             # counter at cell 0
+@call_loop:
+    MOVE 1            # cell 1: scratch space for the called function
+    CALL print_hello
+    BACK 1            # return to cell 0 (counter intact)
+    SUB 1
+    JMPNOT @call_done
+    JMP @call_loop
+@call_done:
+    RET
+
+print_hello:
+    SET "hello"       # operates on cell 1 (caller moved there before CALL)
+    PRINT             # → hello (3 times)
+    RET
