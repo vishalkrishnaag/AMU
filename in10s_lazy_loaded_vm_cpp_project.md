@@ -151,6 +151,23 @@ main:
     RET
 ```
 
+### Control Flow
+
+Local jump labels use `$name:` so they are visually distinct from `@N` cell references.
+They are scoped to the enclosing function and are valid targets for `JMP`, `JMPIF`, and `JMPNOT`.
+
+```intense
+main:
+    SET 3
+$loop:
+    PRINT
+    SUB 1
+    JMPNOT $done
+    JMP $loop
+$done:
+    RET
+```
+
 ### String Operations
 
 | Instruction        | Description |

@@ -26,6 +26,15 @@ static std::string trim(std::string s) {
     return s.substr(start);
 }
 
+static bool labelFromLine(const std::string& line, std::string& label) {
+    auto tokens = Lexer::tokenize(line);
+    if (tokens.size() != 1 || tokens[0].empty() || tokens[0].back() != ':')
+        return false;
+
+    label = tokens[0].substr(0, tokens[0].size() - 1);
+    return !label.empty();
+}
+
 static bool isIntenseSource(const std::filesystem::path& path) {
     auto ext = path.extension().string();
     return ext == ".intense" || ext == ".in10s";
@@ -103,13 +112,9 @@ void FunctionLoader::importPath(const std::string& importTarget, const std::file
 
 void FunctionLoader::buildIndex() {
     for (size_t i = 0; i < lines.size(); ++i) {
-        std::string line = trim(lines[i]);
-        if (!line.empty() && line.back() == ':') {
-            // Strip trailing colon, normalize to uppercase for case-insensitive lookup
-            std::string label = toUpper(trim(line.substr(0, line.size() - 1)));
-            if (!label.empty())
-                labelIndex[label] = i;
-        }
+        std::string label;
+        if (labelFromLine(lines[i], label))
+            labelIndex[toUpper(trim(label))] = i;
     }
 }
 
@@ -131,13 +136,12 @@ Function FunctionLoader::loadFunction(const std::string& name) {
     int lineNumber = 0;
 
     for (size_t i = startLine; i < lines.size(); ++i) {
-        std::string trimmed = trim(lines[i]);
+        std::string label;
 
-        if (!trimmed.empty() && trimmed.back() == ':') {
-            if (trimmed[0] == '@') {
-                // In-function jump target: @label: — record index, don't emit as instruction
-                std::string label = toUpper(trimmed.substr(0, trimmed.size() - 1));
-                fn.localLabels[label] = fn.instructions.size();
+        if (labelFromLine(lines[i], label)) {
+            if (label[0] == '$') {
+                // In-function jump target: $label: — record index, don't emit as instruction
+                fn.localLabels[toUpper(trim(label))] = fn.instructions.size();
                 continue;
             }
             // Global function label → end of this function

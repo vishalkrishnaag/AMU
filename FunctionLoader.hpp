@@ -10,7 +10,7 @@
 
 struct Function {
     std::vector<Instruction> instructions;
-    // @label: targets within the function body → instruction index
+    // $label: targets within the function body → instruction index
     std::unordered_map<std::string, size_t> localLabels;
 };
 

@@ -1,0 +1,151 @@
+# MiniTen: a tiny Lua-ish language compiled by hand to Intense VM instructions.
+# Run:
+#   ./intense.out examples/toy_language_probe.in10s main 4
+#
+# Toy source this file represents:
+#
+#   fn inc(x) { return x + 1 }
+#   fn run_callback(cb) { cb() }
+#
+#   user = {name: "Ada", role: "compiler"}
+#   words = split("mini ten language", " ")
+#   sum = 0
+#   i = 5
+#   while i {
+#       sum = sum + i
+#       i = i - 1
+#   }
+#   print(sum)
+#   print(inc(sum))
+#   run_callback(fn() { print("callback ok") })
+#   try { 1 / 0 } catch e { print(e) }
+#
+# What this exercises:
+# - variables mapped to tape cells
+# - function calls and argument registers
+# - loops and branches with local labels
+# - strings, lists, maps, arithmetic, type checks
+# - code values as callbacks
+# - caught runtime errors as map values
+#
+# Missing pieces exposed by this toy language:
+# - no native local variables or lexical scopes; everything needs tape conventions
+# - no comparison ops (< <= > >= !=), so loops mostly depend on truthiness/zero
+# - no list/map indexing or mutation by key; structured data is storage-only
+# - no return-value convention except "current cell" discipline
+# - EXEC blocks cannot contain labels or JMP, so callbacks cannot express loops
+# - no module/package boundary for a reusable runtime except IMPORT + labels
+
+main:
+    CALL print_banner
+    CALL setup_program_state
+    CALL run_sum_loop
+    CALL call_increment_function
+    CALL run_callback_demo
+    CALL run_error_demo
+    CALL print_tape_summary
+    RET
+
+print_banner:
+    SET "MiniTen toy language probe"
+    PRINT
+    RET
+
+setup_program_state:
+    # cell 0: sum
+    SEEK 0
+    SET 0
+
+    # cell 1: i
+    SEEK 1
+    SET 5
+
+    # cell 2: user record. Useful data shape, but currently not indexable.
+    SEEK 2
+    SET {"name":"Ada","role":"compiler","active":true}
+
+    # cell 3: token list produced from a source-like string.
+    SEEK 3
+    SET "mini ten language"
+    SPLIT " "
+
+    # cell 4: callback code.
+    SEEK 4
+    SET (SET "callback ok" ; PRINT)
+
+    # cell 5: catch block. TRY stores the error map in the current cell first.
+    SEEK 5
+    SET (PRINT)
+
+    # cell 6: a tiny source snippet for the NLP/code-analysis path.
+    SEEK 6
+    SET "let sum = 0\nwhile i { sum = sum + i }\nprint(sum)"
+    NLPANALYZE
+
+    RET
+
+run_sum_loop:
+    # MiniTen lowering:
+    #   while i { sum = sum + i; i = i - 1 }
+$loop:
+    SEEK 1
+    JMPNOT $done
+
+    SEEK 0
+    ADD @1
+
+    SEEK 1
+    SUB 1
+    JMP $loop
+
+$done:
+    SEEK 0
+    PRINT             # expected: 15
+    COPY 1
+    TYPE
+    PRINT             # expected: int
+    TAPE 1
+    COPY 0
+    TAPE 0
+    RET
+
+call_increment_function:
+    # MiniTen lowering:
+    #   print(inc(sum))
+    SEEK 0
+    SETARG 0
+    CALL miniten_inc
+    PRINT             # expected: 16
+    RET
+
+miniten_inc:
+    GETARG 0
+    ADD 1
+    RET
+
+run_callback_demo:
+    # MiniTen lowering:
+    #   run_callback(fn() { print("callback ok") })
+    SEEK 4
+    SETARG 0
+    CALL miniten_run_callback
+    RET
+
+miniten_run_callback:
+    GETARG 0
+    EXEC
+    RET
+
+run_error_demo:
+    # MiniTen lowering:
+    #   try { 1 / 0 } catch e { print(e) }
+    SEEK 7
+    SET (SET 1 ; DIV 0)
+    TRY 5             # expected: {"handled":true,"error":"DIV by zero"}
+    RET
+
+print_tape_summary:
+    # Keep this at the end because it is intentionally noisy, but it reveals
+    # whether all "variables" survived across calls and control-flow.
+    PRINT_TAPE 0
+    RET

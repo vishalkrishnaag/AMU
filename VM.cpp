@@ -566,6 +566,13 @@ Instruction listToInstruction(const List& lst) {
     return ins;
 }
 
+std::string normalizeJumpLabel(const Instruction& ins) {
+    std::string label = argOrThrow(ins, 0);
+    if (label.empty() || label[0] != '$')
+        throw std::runtime_error(ins.opcode + ": jump labels must use $label syntax, got '" + label + "'");
+    return toUpperStr(label);
+}
+
 // ---- ML helpers ------------------------------------------------------------
 
 Eigen::VectorXd listToEigenVector(const List& list) {
@@ -1382,7 +1389,7 @@ void VM::run(const std::string& entry) {
         if (ins.opcode == "RET") return;
 
         if (ins.opcode == "JMP") {
-            std::string label = toUpperStr(argOrThrow(ins, 0));
+            std::string label = normalizeJumpLabel(ins);
             auto it = fn.localLabels.find(label);
             if (it == fn.localLabels.end())
                 throw std::runtime_error("JMP: undefined label '" + ins.args[0] + "'");
@@ -1392,7 +1399,7 @@ void VM::run(const std::string& entry) {
 
         if (ins.opcode == "JMPIF") {
             if (isTruthy(tapes[activeTape].current())) {
-                std::string label = toUpperStr(argOrThrow(ins, 0));
+                std::string label = normalizeJumpLabel(ins);
                 auto it = fn.localLabels.find(label);
                 if (it == fn.localLabels.end())
                     throw std::runtime_error("JMPIF: undefined label '" + ins.args[0] + "'");
@@ -1405,7 +1412,7 @@ void VM::run(const std::string& entry) {
 
         if (ins.opcode == "JMPNOT") {
             if (!isTruthy(tapes[activeTape].current())) {
-                std::string label = toUpperStr(argOrThrow(ins, 0));
+                std::string label = normalizeJumpLabel(ins);
                 auto it = fn.localLabels.find(label);
                 if (it == fn.localLabels.end())
                     throw std::runtime_error("JMPNOT: undefined label '" + ins.args[0] + "'");

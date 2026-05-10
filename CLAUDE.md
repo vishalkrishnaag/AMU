@@ -28,7 +28,7 @@ REPL mode executes one symbolic instruction at a time, prints the active tape af
 | `Tape.hpp` | Sparse tape: `unordered_map<long long, Value>` + head pointer |
 | `Lexer.hpp/cpp` | Tokenises a line; handles quoted strings, chars, JSON literals, `(...)` code blocks, `#` comments |
 | `Parser.hpp/cpp` | Normalises opcode to uppercase, builds `Instruction` |
-| `FunctionLoader.hpp/cpp` | Lazy load + LRU-100 cache + IMPORT; `Function` now carries `localLabels` for `@label:` jump targets |
+| `FunctionLoader.hpp/cpp` | Lazy load + LRU-100 cache + IMPORT; `Function` now carries `localLabels` for `$label:` jump targets |
 | `VM.hpp/cpp` | Executes instructions; owns tapes + `argRegs` vector for SETARG/GETARG |
 | `main.cpp` | CLI entry: `<file> [entry] [tapes] [--debug] [--step]` |
 
@@ -43,10 +43,8 @@ REPL mode executes one symbolic instruction at a time, prints the active tape af
 - **`#`** starts a comment anywhere on a line (handled in Lexer before token loop)
 - **`SOFTMAX`** subtracts max before exp for numerical stability
 - **Code blocks** use `(INSTR1 ; INSTR2 ; ...)` syntax; `(` tokenised as structured token in Lexer
-- **`@label:`** in function bodies = local jump target; does NOT terminate function loading
+- **`$label:`** in function bodies = local jump target; does NOT terminate function loading
 - **`argRegs`** vector in VM saved/restored across CALL/RET — callee inherits caller's args, nested calls are transparent
-- **`@N` cell references in arithmetic args** — `ADD @2` reads the operand from tape cell N of the active tape instead of treating it as a literal; resolved by `resolveOperand()` in VM.cpp, used by ADD/SUB/MUL/DIV/MOD
-- **`@N` cell references in arithmetic args** — `ADD @2` reads the operand from tape cell N of the active tape instead of treating it as a literal; resolved by `resolveOperand()` in VM.cpp, used by ADD/SUB/MUL/DIV/MOD
 - **`@N` cell references in arithmetic args** — `ADD @2` reads the operand from tape cell N of the active tape instead of treating it as a literal; resolved by `resolveOperand()` in VM.cpp, used by ADD/SUB/MUL/DIV/MOD
 
 ## Instruction Categories
@@ -58,7 +56,7 @@ Arithmetic: `ADD`, `SUB`, `MUL`, `DIV`, `MOD`, `ABS`, `NEG` — binary ops accep
 Strings: `CONCAT`, `SPLIT`, `SUBSTR`, `FIND`, `REPLACE`, `UPPER`, `LOWER`  
 File I/O: `READFILE`, `WRITEFILE`, `INPUT`  
 Homoiconic: `EXEC`, `EVAL`, `QUOTE`, `MATCH`, `TRY`, `RAISE`  
-Control flow: `JMP @label`, `JMPIF @label`, `JMPNOT @label`  
+Control flow: `JMP $label`, `JMPIF $label`, `JMPNOT $label`  
 Code manip: `CODELEN`, `CODEGET`, `CODESET`, `CODEAPPEND`, `APPEND`  
 ML stats: `MEANVAL`, `STDDEV`, `NORMALIZE`, `ZSCORE`, `SOFTMAX`  
 ML linalg: `DOTPROD`  
@@ -108,12 +106,12 @@ QUOTE (SET 1 ; ADD 1 ; PRINT)         # store multi-instruction block
 ```intense
 my_fn:
     SET 5
-@loop:
-    PRINT               # @label: lines are jump targets, not emitted as instructions
+$loop:
+    PRINT               # $label: lines are jump targets, not emitted as instructions
     SUB 1
-    JMPNOT @done        # jump if current cell is falsy
-    JMP @loop
-@done:
+    JMPNOT $done        # jump if current cell is falsy
+    JMP $loop
+$done:
     RET
 ```
 
@@ -127,7 +125,7 @@ my_fn:
 | `examples/test_strings.intense` | CONCAT SPLIT FIND REPLACE SUBSTR UPPER LOWER |
 | `examples/test_ml.intense` | All ML ops: stats, normalization, softmax, dotprod, linearreg, predict, kmeans |
 | `examples/test_homoiconic.intense` | EXEC EVAL QUOTE MATCH CODE* APPEND dynamic generation |
-| `examples/test_controlflow.intense` | JMP JMPIF JMPNOT @labels loops nested CALL in loop |
+| `examples/test_controlflow.intense` | JMP JMPIF JMPNOT $labels loops nested CALL in loop |
 | `examples/test_argpass.intense` | SETARG GETARG CLEARARGS ARGCOUNT nested call save/restore |
 
 All tests pass. Run each with `./intense.out examples/<file>.intense main`.
@@ -150,7 +148,7 @@ All tests pass. Run each with `./intense.out examples/<file>.intense main`.
 ## Conventions
 
 - `.intense` files: one instruction per line, opcodes case-insensitive, labels end with `:`
-- Local jump labels: `@name:` — scoped to the enclosing function, used with JMP/JMPIF/JMPNOT
+- Local jump labels: `$name:` — scoped to the enclosing function, used with JMP/JMPIF/JMPNOT
 - Arithmetic operands: literal value (`ADD 5`) or `@N` tape cell reference (`ADD @2` reads cell 2 of the active tape)
 - Value literals: `42` int, `3.14` float, `true`/`false` bool, `'A'` char, `"str"` string, `[1,2]` list, `{"k":v}` map, `null`/`nil` nil, `(INSTR ; ...)` code
 - Arithmetic cell refs: `@N` in an arithmetic arg reads from cell N of the active tape (e.g. `ADD @0`, `MUL @3`)
