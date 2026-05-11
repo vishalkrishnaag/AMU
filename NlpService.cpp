@@ -226,3 +226,149 @@ Map NlpService::diff(const std::string& left, const std::string& right) const {
     result["backend"] = Value(std::string("core"));
     return result;
 }
+
+Map NlpService::grammarCheck(const std::string& text) const {
+    List errors;
+    long long score = 100; // start with perfect score
+
+    // Simple checks
+    if (!text.empty() && !std::isupper(text[0])) {
+        errors.emplace_back("Sentence does not start with capital letter");
+        score -= 10;
+    }
+
+    if (!text.empty() && text.back() != '.' && text.back() != '!' && text.back() != '?') {
+        errors.emplace_back("Sentence does not end with punctuation");
+        score -= 10;
+    }
+
+    // Check for double spaces
+    if (text.find("  ") != std::string::npos) {
+        errors.emplace_back("Contains double spaces");
+        score -= 5;
+    }
+
+    // Check for common misspellings (very basic)
+    std::vector<std::string> misspellings = {"teh", "recieve", "seperate"};
+    for (const auto& mis : misspellings) {
+        if (text.find(mis) != std::string::npos) {
+            errors.emplace_back("Possible misspelling: " + mis);
+            score -= 15;
+        }
+    }
+
+    Map result;
+    result["score"] = Value(score);
+    result["errors"] = Value(errors);
+    result["backend"] = Value(std::string("core"));
+    return result;
+}
+
+Map NlpService::contextAnalysis(const std::string& text) const {
+    auto tokens = tokenStrings(text);
+    List nouns, verbs, adjectives;
+
+    // Very basic POS tagging simulation
+    for (const auto& token : tokens) {
+        if (token.size() > 3 && (token.back() == 's' || token.find("tion") != std::string::npos)) {
+            nouns.emplace_back(token);
+        } else if (token.size() > 2 && (token.substr(token.size()-2) == "ed" || token.substr(token.size()-3) == "ing")) {
+            verbs.emplace_back(token);
+        } else if (token.size() > 2) {
+            adjectives.emplace_back(token);
+        }
+    }
+
+    Map result;
+    result["nouns"] = Value(nouns);
+    result["verbs"] = Value(verbs);
+    result["adjectives"] = Value(adjectives);
+    result["topic"] = Value("general"); // placeholder
+    result["backend"] = Value(std::string("core"));
+    return result;
+}
+
+Map NlpService::logicalOperation(const std::string& statement, const std::string& operation) const {
+    // Parse simple "if P then Q"
+    std::string lower = statement;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+
+    std::string p, q;
+    size_t if_pos = lower.find("if ");
+    size_t then_pos = lower.find(" then ");
+    if (if_pos != std::string::npos && then_pos != std::string::npos && then_pos > if_pos) {
+        p = statement.substr(if_pos + 3, then_pos - if_pos - 3);
+        q = statement.substr(then_pos + 6);
+    } else {
+        Map result;
+        result["error"] = Value("Unable to parse logical statement");
+        return result;
+    }
+
+    std::string result_statement;
+    if (operation == "contrapositive") {
+        result_statement = "if not " + q + " then not " + p;
+    } else if (operation == "converse") {
+        result_statement = "if " + q + " then " + p;
+    } else {
+        result_statement = "Unknown operation";
+    }
+
+    Map result;
+    result["original"] = Value(statement);
+    result["operation"] = Value(operation);
+    result["result"] = Value(result_statement);
+    result["backend"] = Value(std::string("core"));
+    return result;
+}
+
+Map NlpService::fuzzyLogic(const std::string& input, double membership) const {
+    // Simple fuzzy membership for sentiment
+    double fuzzy_positive = 0.0;
+    double fuzzy_negative = 0.0;
+
+    auto tokens = tokenStrings(input);
+    for (const auto& token : tokens) {
+        if (positiveWords().count(token)) {
+            fuzzy_positive += membership;
+        }
+        if (negativeWords().count(token)) {
+            fuzzy_negative += membership;
+        }
+    }
+
+    std::string dominant = "neutral";
+    if (fuzzy_positive > fuzzy_negative) dominant = "positive";
+    else if (fuzzy_negative > fuzzy_positive) dominant = "negative";
+
+    Map result;
+    result["fuzzy_positive"] = Value(fuzzy_positive);
+    result["fuzzy_negative"] = Value(fuzzy_negative);
+    result["dominant"] = Value(dominant);
+    result["membership_threshold"] = Value(membership);
+    result["backend"] = Value(std::string("core"));
+    return result;
+}
+
+Map NlpService::probabilityCalc(const std::string& data, const std::string& type) const {
+    auto tokens = tokenStrings(data);
+    std::unordered_map<std::string, long long> freq;
+
+    for (const auto& token : tokens) {
+        freq[token]++;
+    }
+
+    long long total = tokens.size();
+    Map probabilities;
+    for (const auto& [token, count] : freq) {
+        probabilities[token] = Value(static_cast<double>(count) / total);
+    }
+
+    Map result;
+    result["total_tokens"] = Value(total);
+    result["unique_tokens"] = Value(static_cast<long long>(freq.size()));
+    result["probabilities"] = Value(probabilities);
+    result["type"] = Value(type);
+    result["backend"] = Value(std::string("core"));
+    return result;
+}

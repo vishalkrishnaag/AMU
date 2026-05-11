@@ -1,0 +1,2 @@
+last_test_passed: true
+candidate_count: 2

@@ -50,7 +50,7 @@ REPL mode executes one symbolic instruction at a time, prints the active tape af
 ## Instruction Categories
 
 Tape nav: `MOVE`, `BACK`, `TAPE`, `SEEK n`, `PRINT_TAPE n`  
-Cell ops: `SET`, `PRINT`, `PRINTJ`, `LEN`/`LENGTH`, `CMP`/`COMPARE`, `COPY`, `DELETE`  
+Cell ops: `SET`, `PRINT`, `PRINTJ`, `LEN`/`LENGTH`, `CMP`/`COMPARE`, `COPY`, `DELETE`, `CLEAR_TAPE`/`CLEARTAPE`  
 Type sys: `TYPE`, `CAST`  
 Arithmetic: `ADD`, `SUB`, `MUL`, `DIV`, `MOD`, `ABS`, `NEG` — binary ops accept literal or `@N`; unary ops work on current cell  
 Strings: `CONCAT`, `SPLIT`, `SUBSTR`, `FIND`, `REPLACE`, `UPPER`, `LOWER`  
@@ -62,7 +62,7 @@ ML stats: `MEANVAL`, `STDDEV`, `NORMALIZE`, `ZSCORE`, `SOFTMAX`
 ML linalg: `DOTPROD`  
 ML supervised: `LINEARREG`, `PREDICT`  
 ML clustering: `KMEANS`  
-NLP service: `NLPLOAD`, `NLPTOKENS`, `NLPANALYZE`, `NLPSIM`, `NLPDIFF`, `NLPPREDICT`, `NLPSENTIMENT`  
+NLP service: `NLPLOAD`, `NLPTOKENS`, `NLPANALYZE`, `NLPSIM`, `NLPDIFF`, `NLPPREDICT`, `NLPSENTIMENT`, `NLPGRAMMAR`, `NLPCONTEXT`, `NLPLOGIC`, `NLPFUZZY`, `NLPPROB`  
 Control: `CALL`, `ARG`, `RET`, `IMPORT`  
 Arg passing: `SETARG`, `GETARG`, `CLEARARGS`, `ARGCOUNT`
 

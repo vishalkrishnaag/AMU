@@ -1,0 +1,4 @@
+main:
+    SET 4
+    PRINT
+    RET

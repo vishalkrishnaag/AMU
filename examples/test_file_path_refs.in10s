@@ -1,0 +1,15 @@
+# Test: READFILE / WRITEFILE path arguments can come from @cell references.
+# Run: ./intense.out examples/test_file_path_refs.in10s main
+
+main:
+    SEEK 0
+    SET "/tmp/intense_path_ref.txt"
+
+    SEEK 1
+    SET "amu-memory-path-ok"
+    WRITEFILE @0
+
+    SEEK 2
+    READFILE @0
+    PRINT             # → amu-memory-path-ok
+    RET

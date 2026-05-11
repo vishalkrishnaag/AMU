@@ -1,0 +1,2 @@
+{"tapes":{"result":4,"analysis":2,"generated":3,"knowledge":1,"universe":0},"status":"candidate","answer":4,"input_pattern":"how many + legs + cat","name":"cat_legs_v2"}
+4

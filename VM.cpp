@@ -708,9 +708,15 @@ void VM::execute(const Instruction& ins) {
     // ---- Tape navigation --------------------------------------------------
 
     if (ins.opcode == "MOVE") {
+        if (ins.args.empty())
+             tape.moveForward(static_cast<long long>(1));
+        else
         tape.moveForward(std::stoll(argOrThrow(ins, 0)));
     }
     else if (ins.opcode == "BACK") {
+        if (ins.args.empty())
+             tape.moveBackward(static_cast<long long>(1));
+        else
         tape.moveBackward(std::stoll(argOrThrow(ins, 0)));
     }
 
@@ -809,6 +815,10 @@ void VM::execute(const Instruction& ins) {
             throw std::runtime_error("COPY tape index out of bounds: " + std::to_string(dest));
         tapes[dest].cells[tapes[dest].ptr] = tape.current();
     }
+    else if (ins.opcode == "CLEAR_TAPE") {
+        tape.cells.clear();
+        tape.ptr = 0;
+    }
     else if (ins.opcode == "DELETE") {
         tape.cells.erase(tape.ptr);
     }
@@ -848,6 +858,58 @@ void VM::execute(const Instruction& ins) {
         long long lhs = static_cast<long long>(numericValue(tape.current()));
         tape.current() = Value(lhs % divisor);
     }
+    else if (ins.opcode == "LT") {
+        Value operand = resolveOperand(argOrThrow(ins, 0), tape);
+        long long less_than_value= static_cast<long long>(numericValue(operand));
+        if (less_than_value == 0)
+        {
+          tape.current() = Value(false);   
+        }
+        else{
+        long long lhs = static_cast<long long>(numericValue(tape.current()));
+        tape.current() = Value(lhs < less_than_value);
+        }
+
+    }
+        else if (ins.opcode == "GT") {
+        Value operand = resolveOperand(argOrThrow(ins, 0), tape);
+        long long less_than_value= static_cast<long long>(numericValue(operand));
+        if (less_than_value == 0)
+        {
+          tape.current() = Value(false);   
+        }
+        else{
+        long long lhs = static_cast<long long>(numericValue(tape.current()));
+        tape.current() = Value(lhs > less_than_value);
+        }
+
+    }
+        else if (ins.opcode == "LTE") {
+        Value operand = resolveOperand(argOrThrow(ins, 0), tape);
+        long long less_than_value= static_cast<long long>(numericValue(operand));
+        if (less_than_value == 0)
+        {
+          tape.current() = Value(false);   
+        }
+        else{
+        long long lhs = static_cast<long long>(numericValue(tape.current()));
+        tape.current() = Value(lhs <= less_than_value);
+        }
+
+    }
+    else if (ins.opcode == "GTE") {
+        Value operand = resolveOperand(argOrThrow(ins, 0), tape);
+        long long less_than_value= static_cast<long long>(numericValue(operand));
+        if (less_than_value == 0)
+        {
+          tape.current() = Value(false);   
+        }
+        else{
+        long long lhs = static_cast<long long>(numericValue(tape.current()));
+        tape.current() = Value(lhs >= less_than_value);
+        }
+
+    }
     else if (ins.opcode == "ABS") {
         double val = numericValue(tape.current());
         double result = val < 0 ? -val : val;
@@ -863,7 +925,7 @@ void VM::execute(const Instruction& ins) {
     // ---- File I/O ---------------------------------------------------------
 
     else if (ins.opcode == "READFILE") {
-        std::string path = stringifyValue(parseValue(argOrThrow(ins, 0)));
+        std::string path = stringifyValue(resolveOperand(argOrThrow(ins, 0), tape));
         std::ifstream file(path);
         if (!file) throw std::runtime_error("Cannot open file: " + path);
         std::stringstream buf;
@@ -871,7 +933,7 @@ void VM::execute(const Instruction& ins) {
         tape.current() = Value(buf.str());
     }
     else if (ins.opcode == "WRITEFILE") {
-        std::string path = stringifyValue(parseValue(argOrThrow(ins, 0)));
+        std::string path = stringifyValue(resolveOperand(argOrThrow(ins, 0), tape));
         std::ofstream file(path);
         if (!file) throw std::runtime_error("Cannot write file: " + path);
         file << stringifyValue(tape.current());
@@ -978,6 +1040,24 @@ void VM::execute(const Instruction& ins) {
         int k = ins.args.size() > 0 ? std::stoi(ins.args[0]) : 1;
         double threshold = ins.args.size() > 1 ? std::stod(ins.args[1]) : 0.0;
         tape.current() = Value(nlp.sentiment(stringifyValue(tape.current()), k, threshold));
+    }
+    else if (ins.opcode == "NLPGRAMMAR") {
+        tape.current() = Value(nlp.grammarCheck(stringifyValue(tape.current())));
+    }
+    else if (ins.opcode == "NLPCONTEXT") {
+        tape.current() = Value(nlp.contextAnalysis(stringifyValue(tape.current())));
+    }
+    else if (ins.opcode == "NLPLOGIC") {
+        std::string operation = ins.args.empty() ? "contrapositive" : stringifyValue(parseValue(ins.args[0]));
+        tape.current() = Value(nlp.logicalOperation(stringifyValue(tape.current()), operation));
+    }
+    else if (ins.opcode == "NLPFUZZY") {
+        double membership = ins.args.empty() ? 1.0 : std::stod(ins.args[0]);
+        tape.current() = Value(nlp.fuzzyLogic(stringifyValue(tape.current()), membership));
+    }
+    else if (ins.opcode == "NLPPROB") {
+        std::string type = ins.args.empty() ? "token" : stringifyValue(parseValue(ins.args[0]));
+        tape.current() = Value(nlp.probabilityCalc(stringifyValue(tape.current()), type));
     }
 
     // ---- I/O: stdin -------------------------------------------------------
@@ -1308,7 +1388,7 @@ void VM::execute(const Instruction& ins) {
 
     else if (ins.opcode == "SETARG") {
         size_t n = static_cast<size_t>(std::stoull(argOrThrow(ins, 0)));
-        Value v = ins.args.size() > 1 ? parseValue(ins.args[1]) : tape.current();
+        Value v = ins.args.size() > 1 ? resolveOperand(ins.args[1], tape) : tape.current();
         if (argRegs.size() <= n) argRegs.resize(n + 1);
         argRegs[n] = v;
     }
@@ -1316,23 +1396,20 @@ void VM::execute(const Instruction& ins) {
         size_t n = static_cast<size_t>(std::stoull(argOrThrow(ins, 0)));
         tape.current() = n < argRegs.size() ? argRegs[n] : Value();
     }
-    else if (ins.opcode == "CLEARARGS") {
+    else if (ins.opcode == "CLEAR_ARGS") {
         argRegs.clear();
     }
     else if (ins.opcode == "ARGCOUNT") {
         tape.current() = Value(static_cast<long long>(argRegs.size()));
     }
 
-    // ---- Old inline-arg system (kept for backward compat) -----------------
-
-    else if (ins.opcode == "ARG") {
-        int index = std::stoi(argOrThrow(ins, 0));
-        if (callStack.empty())
-            throw std::runtime_error("ARG used outside of a function call");
-        const Frame& frame = callStack.top();
-        if (index < 0 || index >= static_cast<int>(frame.args.size()))
-            throw std::runtime_error("ARG index out of range: " + std::to_string(index));
-        tape.current() = frame.args[index];
+    else if (ins.opcode == "SHOW_ARGS")
+    {
+        if (argRegs.empty())
+            throw std::runtime_error("SHOW_ARGS used outside of a function call");
+        for (size_t i = 0; i < argRegs.size(); ++i) {
+            std::cout << "ARG " << i << ": " << stringifyValue(argRegs[i]) << "\n";
+        }
     }
     else if (ins.opcode == "CALL") {
         Frame frame;

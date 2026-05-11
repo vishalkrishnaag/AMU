@@ -1,0 +1,10 @@
+IMPORT ../poet_algorithm.in10s
+
+main:
+    SETARG 0 "how many legs a cat have"
+    CALL poet_generate
+    SEEK 7
+    WRITEFILE "/home/vishal/int10s/training/AMU4/memory/generated_algorithms/cat_legs_candidate.in10s"
+    CALL execute_generated_answer
+    PRINT
+    RET

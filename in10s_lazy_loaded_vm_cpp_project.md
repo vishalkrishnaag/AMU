@@ -108,6 +108,7 @@ Resolved relative to the importing file. Circular imports are detected and skipp
 | `PRINTJ`       | Print the current cell as JSON |
 | `LEN`          | Store the cell count of the current tape into the current cell |
 | `CMP n`        | Compare current cell with tape `n`'s current cell; store `bool` result |
+| `CLEAR_TAPE`   | Clear occupied cells on the active sparse tape and reset pointer to 0 |
 
 ### Type System
 
@@ -184,8 +185,8 @@ $done:
 
 | Instruction        | Description |
 |--------------------|-------------|
-| `READFILE path`    | Read entire file into current cell as Str |
-| `WRITEFILE path`   | Write current cell (stringified) to file |
+| `READFILE path`    | Read entire file into current cell as Str; `path` may be a literal or `@N` cell reference |
+| `WRITEFILE path`   | Write current cell (stringified) to file; `path` may be a literal or `@N` cell reference |
 
 ### ML — Descriptive Statistics
 
@@ -242,6 +243,11 @@ NLP is implemented as core tape-native text analysis by default. The machine doe
 | `NLPDIFF cell`           | Store map with similarity, distance, shared, left-only, and right-only tokens |
 | `NLPPREDICT [k] [thr]`   | Classify current text using the core lexicon classifier; stores `[[label, score], ...]` |
 | `NLPSENTIMENT [k] [thr]` | Store transparent lexicon sentiment: label, score, polarity, hits, predictions |
+| `NLPGRAMMAR`             | Check grammar of current text; store map with score and errors |
+| `NLPCONTEXT`             | Analyze context; store map with nouns, verbs, adjectives, topic |
+| `NLPLOGIC [op]`         | Apply logical operation (contrapositive, converse) to current statement; store result map |
+| `NLPFUZZY [mem]`        | Fuzzy logic analysis with membership threshold; store fuzzy scores |
+| `NLPPROB [type]`        | Calculate token probabilities; store map with frequencies and probabilities |
 
 ### Assembly-Level Error Handling
 

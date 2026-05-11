@@ -1,0 +1,382 @@
+# Cognitive bias simulations for the Intense tape VM.
+#
+# Run all:
+#   ./intense.out memory/cognitive_biases_simulated.in10s main 4
+#
+# Run one:
+#   ./intense.out memory/cognitive_biases_simulated.in10s confirmation_bias 4
+#   ./intense.out memory/cognitive_biases_simulated.in10s anchoring_bias 4
+#
+# This version tries to simulate bias as process, not just as arithmetic:
+# attention loops, branch choices, memory replay, MATCH, NLP sentiment, and
+# executable Code cells are used to show how the decision gets distorted.
+
+main:
+    CALL confirmation_bias
+    CALL availability_bias
+    CALL anchoring_bias
+    CALL overconfidence_bias
+    CALL halo_effect
+    CALL negativity_bias
+    CALL self_serving_bias
+    CALL survivorship_bias
+    RET
+
+confirmation_bias:
+    CALL reset_tape0
+    SET "== confirmation bias: biased evidence search =="
+    PRINT
+
+    SEEK 0
+    SET 0             # belief score
+    SEEK 1
+    SET 3             # supporting memories remaining
+    SEEK 2
+    SET 2             # opposing memories remaining
+    SEEK 3
+    SET 5             # attention budget
+
+$confirm_loop:
+    SEEK 3
+    JMPNOT $confirm_done
+
+    SEEK 1
+    JMPIF $notice_support
+
+    SEEK 2
+    JMPIF $notice_opposition
+    JMP $confirm_done
+
+$notice_support:
+    SEEK 7
+    SET "retrieved confirming evidence"
+    PRINT
+    SEEK 0
+    ADD 2
+    SEEK 1
+    SUB 1
+    SEEK 3
+    SUB 1
+    JMP $confirm_loop
+
+$notice_opposition:
+    SEEK 7
+    SET "retrieved opposing evidence, discounted it"
+    PRINT
+    SEEK 0
+    SUB 1
+    SEEK 2
+    SUB 1
+    SEEK 3
+    SUB 1
+    JMP $confirm_loop
+
+$confirm_done:
+    SEEK 0
+    PRINT
+    SET "result: same evidence pool, biased search path"
+    PRINT
+    RET
+
+availability_bias:
+    CALL reset_tape0
+    SET "== availability bias: vivid memory replay =="
+    PRINT
+
+    SEEK 0
+    SET 0             # perceived risk
+    SEEK 1
+    SET 3             # vivid replay count
+    SEEK 2
+    SET 1             # base-rate reminder count
+    SEEK 4
+    SET (SEEK 7 ; SET "vivid crash story replayed" ; PRINT ; SEEK 4)
+
+$available_vivid:
+    SEEK 1
+    JMPNOT $available_base
+    SEEK 4
+    EXEC
+    SEEK 0
+    ADD 3
+    SEEK 1
+    SUB 1
+    JMP $available_vivid
+
+$available_base:
+    SEEK 2
+    JMPNOT $available_done
+    SEEK 7
+    SET "base rate remembered once"
+    PRINT
+    SEEK 0
+    ADD 1
+    SEEK 2
+    SUB 1
+    JMP $available_base
+
+$available_done:
+    SEEK 0
+    PRINT
+    SET "result: ease of recall becomes perceived probability"
+    PRINT
+    RET
+
+anchoring_bias:
+    CALL reset_tape0
+    SET "== anchoring bias: insufficient adjustment =="
+    PRINT
+
+    SEEK 0
+    SET 100           # current estimate
+    SEEK 1
+    SET 2             # adjustment budget
+    SEEK 2
+    SET 50            # fair value stored but not reached
+
+    SET "anchor accepted: 100"
+    PRINT
+
+$anchor_adjust:
+    SEEK 1
+    JMPNOT $anchor_done
+    SEEK 0
+    SUB 10
+    PRINT             # estimate after each small adjustment
+    SEEK 1
+    SUB 1
+    JMP $anchor_adjust
+
+$anchor_done:
+    SEEK 0
+    PRINT
+    SET "result: stopped adjusting before reaching fair value 50"
+    PRINT
+    RET
+
+overconfidence_bias:
+    CALL reset_tape0
+    SET "== overconfidence bias: prediction vs feedback =="
+    PRINT
+
+    SEEK 0
+    SET 9             # confidence out of 10
+    SEEK 1
+    SET 0             # measured correct answers
+
+    CALL answer_correct
+    CALL answer_wrong
+    CALL answer_correct
+    CALL answer_wrong
+    CALL answer_wrong
+    CALL answer_correct
+
+    SEEK 0
+    PRINT             # confidence after feedback
+    SEEK 1
+    PRINT             # actual correct count
+    SET "result: confidence updates slower than evidence"
+    PRINT
+    RET
+
+answer_correct:
+    SEEK 7
+    SET "answer checked: correct"
+    PRINT
+    SEEK 1
+    ADD 1
+    RET
+
+answer_wrong:
+    SEEK 7
+    SET "answer checked: wrong, confidence barely moves"
+    PRINT
+    SEEK 0
+    SUB 1
+    RET
+
+halo_effect:
+    CALL reset_tape0
+    SET "== halo effect: visible trait spills over =="
+    PRINT
+
+    SEEK 0
+    SET {"presentation":"excellent","debugging":5,"reliability":5}
+    MATCH {"presentation":"excellent"}
+    JMPIF $halo_bonus
+    JMP $halo_score
+
+$halo_bonus:
+    SET "presentation matched; adding halo bonus"
+    PRINT
+    SEEK 2
+    SET 4
+
+$halo_score:
+    SEEK 0
+    SET 5             # actual debugging signal
+    ADD @2            # halo bonus if present
+    PRINT
+    SET "result: one good trait changed another judgment"
+    PRINT
+    RET
+
+negativity_bias:
+    CALL reset_tape0
+    SET "== negativity bias: bad memory repeats =="
+    PRINT
+
+    SEEK 0
+    SET 0             # mood score
+    SEEK 1
+    SET 3             # positive comments
+    SEEK 2
+    SET 4             # negative replay weight
+
+$positive_loop:
+    SEEK 1
+    JMPNOT $negative_loop
+    SEEK 7
+    SET "positive comment noticed"
+    PRINT
+    SEEK 0
+    ADD 1
+    SEEK 1
+    SUB 1
+    JMP $positive_loop
+
+$negative_loop:
+    SEEK 2
+    JMPNOT $negative_done
+    SEEK 7
+    SET "negative comment replayed"
+    PRINT
+    SEEK 0
+    SUB 1
+    SEEK 2
+    SUB 1
+    JMP $negative_loop
+
+$negative_done:
+    SEEK 0
+    PRINT
+    SEEK 3
+    SET "good good good bad failure failure failure failure"
+    NLPSENTIMENT
+    PRINTJ
+    SET "result: repeated negative recall dominates the felt summary"
+    PRINT
+    RET
+
+self_serving_bias:
+    CALL reset_tape0
+    SET "== self-serving bias: attribution switch =="
+    PRINT
+
+    SEEK 0
+    SET "success"
+    MATCH success
+    JMPIF $credit_self
+
+$credit_self:
+    SET "success attribution -> my skill"
+    PRINT
+
+    SEEK 0
+    SET "failure"
+    MATCH failure
+    JMPIF $blame_world
+
+$blame_world:
+    SET "failure attribution -> bad luck"
+    PRINT
+    SET "result: explanation changes to protect self-image"
+    PRINT
+    RET
+
+survivorship_bias:
+    CALL reset_tape0
+    SET "== survivorship bias: filter hides failures =="
+    PRINT
+
+    SEEK 0
+    SET 0             # visible total
+    SEEK 1
+    SET 0             # visible count
+    SEEK 2
+    SET 90            # survivor A
+    SEEK 3
+    SET 80            # survivor B
+    SEEK 4
+    SET 0             # failed C
+    SEEK 5
+    SET 0             # failed D
+
+    SEEK 2
+    JMPIF $keep_a
+    JMP $check_b
+$keep_a:
+    SEEK 0
+    ADD @2
+    SEEK 1
+    ADD 1
+
+$check_b:
+    SEEK 3
+    JMPIF $keep_b
+    JMP $check_c
+$keep_b:
+    SEEK 0
+    ADD @3
+    SEEK 1
+    ADD 1
+
+$check_c:
+    SEEK 4
+    JMPIF $keep_c
+    SEEK 7
+    SET "failed project C filtered out"
+    PRINT
+    JMP $check_d
+$keep_c:
+    SEEK 0
+    ADD @4
+    SEEK 1
+    ADD 1
+
+$check_d:
+    SEEK 5
+    JMPIF $keep_d
+    SEEK 7
+    SET "failed project D filtered out"
+    PRINT
+    JMP $survivor_summary
+$keep_d:
+    SEEK 0
+    ADD @5
+    SEEK 1
+    ADD 1
+
+$survivor_summary:
+    SEEK 0
+    DIV @1
+    PRINT
+
+    SEEK 6
+    SET 0
+    ADD @2
+    ADD @3
+    ADD @4
+    ADD @5
+    DIV 4
+    PRINT
+    SET "result: filter changed the story before analysis began"
+    PRINT
+    RET
+
+reset_tape0:
+    PRINT_TAPE 0
+    TAPE 0
+    SEEK 0
+    CLEAR_TAPE
+    RET

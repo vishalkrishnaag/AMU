@@ -1,0 +1,34 @@
+main:
+    # Set some values in tape cells
+    SEEK 0
+    SET 100
+    SEEK 1
+    SET 200
+    SEEK 2
+    SET 300
+
+    # Call function that returns a value in current cell
+    CALL compute_value
+    # Now current cell has 42
+
+    # Use @0 to pass the value from cell 0 to SETARG
+    SETARG 0 @0  # Should pass 100
+    SETARG 1 @1  # 200
+    SETARG 2 @2  # 300
+    CALL sum_args
+    PRINT  # Should print 600
+    RET
+
+compute_value:
+    SET 42
+    RET
+
+sum_args:
+    GETARG 0
+    MOVE 1
+    GETARG 1
+    ADD @0  # Add arg1 to current (arg0)
+    MOVE 2
+    GETARG 2
+    ADD @1  # Add arg2 to current (arg0 + arg1)
+    RET

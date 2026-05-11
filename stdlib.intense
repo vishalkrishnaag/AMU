@@ -253,6 +253,46 @@ nlp_sentiment:
     NLPSENTIMENT 1
     RET
 
+# nlp_grammar(text): check grammar of text
+# Args: SETARG 0 text
+# Output: map with score, errors
+nlp_grammar:
+    GETARG 0
+    NLPGRAMMAR
+    RET
+
+# nlp_context(text): analyze context and extract parts of speech
+# Args: SETARG 0 text
+# Output: map with nouns, verbs, adjectives, topic
+nlp_context:
+    GETARG 0
+    NLPCONTEXT
+    RET
+
+# nlp_logic(statement, operation): apply logical operations like contrapositive
+# Args: SETARG 0 statement, SETARG 1 operation (contrapositive, converse)
+# Output: map with original, operation, result
+nlp_logic:
+    GETARG 0
+    NLPLOGIC
+    RET
+
+# nlp_fuzzy(text, membership): fuzzy logic analysis
+# Args: SETARG 0 text, SETARG 1 membership threshold
+# Output: map with fuzzy_positive, fuzzy_negative, dominant
+nlp_fuzzy:
+    GETARG 0
+    NLPFUZZY
+    RET
+
+# nlp_probability(data, type): calculate token probabilities
+# Args: SETARG 0 data, SETARG 1 type
+# Output: map with total_tokens, unique_tokens, probabilities
+nlp_probability:
+    GETARG 0
+    NLPPROB
+    RET
+
 # ============================================================================
 # PROBABILITY AND SAMPLING
 # ============================================================================

@@ -1,0 +1,4 @@
+main:
+    SET "unknown"
+    PRINT
+    RET
