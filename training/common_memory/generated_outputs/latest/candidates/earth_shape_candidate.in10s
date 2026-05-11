@@ -1,0 +1,4 @@
+main:
+    SET "roughly spherical"
+    PRINT
+    RET

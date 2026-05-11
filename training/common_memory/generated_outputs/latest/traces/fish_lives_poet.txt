@@ -1,0 +1,2 @@
+{"source":"training/common_memory/facts.json","status":"answered","relation":"lives_in","route":"fact_lookup"}
+water

@@ -1,0 +1,4 @@
+main:
+    SET "unable_to_answer"
+    PRINT
+    RET

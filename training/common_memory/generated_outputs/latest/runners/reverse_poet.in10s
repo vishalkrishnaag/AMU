@@ -1,0 +1,9 @@
+IMPORT /home/vishal/int10s/training/poet_algorithm_v1.in10s
+
+main:
+    SETARG 0 "reverse the word poet"
+    SETARG 1 "/home/vishal/int10s/training/common_memory/generated_outputs/latest/candidates/reverse_poet_candidate.in10s"
+    SETARG 2 "auto"
+    CALL poet_solve
+    PRINT
+    RET

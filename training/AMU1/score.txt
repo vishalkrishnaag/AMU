@@ -1,4 +1,0 @@
-AMU1
-problem: how many legs a cat have
-expected: 4
-qualified: true

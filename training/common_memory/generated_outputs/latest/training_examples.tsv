@@ -1,0 +1,12 @@
+problem	expected	actual	route	status
+how many legs a cat have	4	4	fact_lookup	PASS
+how many legs does a dog have	4	4	fact_lookup	PASS
+how many legs does a human have	2	2	fact_lookup	PASS
+how many wings does a bird have	2	2	fact_lookup	PASS
+how many wings does a cat have	0	0	fact_lookup	PASS
+where does a fish live	water	water	fact_lookup	PASS
+what shape is earth	roughly spherical	roughly spherical	fact_lookup	PASS
+what is 8 plus 9	17	17	addition	PASS
+what is 2 times 7	14	14	multiplication	PASS
+reverse the word poet	teop	teop	reverse_word	PASS
+what color is silence	unable_to_answer	unable_to_answer	no_known_route	PASS

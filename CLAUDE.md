@@ -50,14 +50,14 @@ REPL mode executes one symbolic instruction at a time, prints the active tape af
 ## Instruction Categories
 
 Tape nav: `MOVE`, `BACK`, `TAPE`, `SEEK n`, `PRINT_TAPE n`  
-Cell ops: `SET`, `PRINT`, `PRINTJ`, `LEN`/`LENGTH`, `CMP`/`COMPARE`, `COPY`, `DELETE`, `CLEAR_TAPE`/`CLEARTAPE`  
+Cell ops: `SET`, `PRINT`, `PRINTJ`, `LEN`/`LENGTH`, `CMP`/`COMPARE`, `COPY`, `DELETE`, `CLEAR_TAPE`/`CLEARTAPE`, `JSONGET`, `JSONPARSE`, `JSONLEN`, `JSONSET`, `JSONPUSH`  
 Type sys: `TYPE`, `CAST`  
 Arithmetic: `ADD`, `SUB`, `MUL`, `DIV`, `MOD`, `ABS`, `NEG` — binary ops accept literal or `@N`; unary ops work on current cell  
-Strings: `CONCAT`, `SPLIT`, `SUBSTR`, `FIND`, `REPLACE`, `UPPER`, `LOWER`  
+Strings: `CONCAT`, `SPLIT`, `SUBSTR`, `FIND`, `REPLACE`, `UPPER`, `LOWER`, `REVERSE`  
 File I/O: `READFILE`, `WRITEFILE`, `INPUT`  
 Homoiconic: `EXEC`, `EVAL`, `QUOTE`, `MATCH`, `TRY`, `RAISE`  
 Control flow: `JMP $label`, `JMPIF $label`, `JMPNOT $label`  
-Code manip: `CODELEN`, `CODEGET`, `CODESET`, `CODEAPPEND`, `APPEND`  
+Code manip: `CODELEN`, `CODEGET`, `CODESET`, `CODEAPPEND`, `APPEND`, `MAKEANSWERCODE`, `MAKEANSWERSOURCE`  
 ML stats: `MEANVAL`, `STDDEV`, `NORMALIZE`, `ZSCORE`, `SOFTMAX`  
 ML linalg: `DOTPROD`  
 ML supervised: `LINEARREG`, `PREDICT`  

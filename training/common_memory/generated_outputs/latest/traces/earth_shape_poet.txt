@@ -1,0 +1,2 @@
+{"source":"training/common_memory/facts.json","status":"answered","relation":"shape","route":"fact_lookup"}
+roughly spherical

@@ -1,0 +1,12 @@
+status	name	expected	actual	route	problem
+PASS	cat_legs	4	4	fact_lookup	how many legs a cat have
+PASS	dog_legs	4	4	fact_lookup	how many legs does a dog have
+PASS	human_legs	2	2	fact_lookup	how many legs does a human have
+PASS	bird_wings	2	2	fact_lookup	how many wings does a bird have
+PASS	cat_wings	0	0	fact_lookup	how many wings does a cat have
+PASS	fish_lives	water	water	fact_lookup	where does a fish live
+PASS	earth_shape	roughly spherical	roughly spherical	fact_lookup	what shape is earth
+PASS	addition_8_9	17	17	addition	what is 8 plus 9
+PASS	multiplication_2_7	14	14	multiplication	what is 2 times 7
+PASS	reverse_poet	teop	teop	reverse_word	reverse the word poet
+PASS	unknown_color_silence	unable_to_answer	unable_to_answer	no_known_route	what color is silence

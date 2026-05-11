@@ -1,0 +1,14 @@
+{
+  "kind": "common_fact_memory",
+  "facts": [
+    {"subject": "cat", "relation": "legs", "answer": 4},
+    {"subject": "dog", "relation": "legs", "answer": 4},
+    {"subject": "horse", "relation": "legs", "answer": 4},
+    {"subject": "human", "relation": "legs", "answer": 2},
+    {"subject": "spider", "relation": "legs", "answer": 8},
+    {"subject": "ant", "relation": "legs", "answer": 6},
+    {"subject": "bird", "relation": "wings", "answer": 2},
+    {"subject": "fish", "relation": "lives_in", "answer": "water"},
+    {"subject": "earth", "relation": "shape", "answer": "roughly spherical"}
+  ]
+}

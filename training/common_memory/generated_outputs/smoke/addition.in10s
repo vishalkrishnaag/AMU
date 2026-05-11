@@ -1,0 +1,4 @@
+main:
+    SET 17
+    PRINT
+    RET

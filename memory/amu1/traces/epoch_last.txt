@@ -1,6 +1,0 @@
-== epoch: cat legs ==
-{"status":"candidate","answer":4,"input_pattern":"how many + legs + cat","name":"cat_legs_v1"}
-feedback: correct; reuse cat_legs_v1 next time
-== epoch: unknown problem ==
-{"status":"candidate","answer":"unknown","input_pattern":"fallback","name":"unknown_v1"}
-feedback: no learned algorithm yet; fallback accepted

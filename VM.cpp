@@ -11,6 +11,7 @@
 #include <stdexcept>
 #include <numeric>
 #include <vector>
+#include <filesystem>
 #include <unistd.h>
 
 // ---------------------------------------------------------------------------
@@ -19,6 +20,8 @@
 namespace {
 
 // ---- String utilities ------------------------------------------------------
+
+std::string stringifyValue(const Value& value);
 
 bool isInteger(const std::string& token) {
     if (token.empty()) return false;
@@ -64,6 +67,38 @@ std::string trimStr(const std::string& s) {
     if (start == std::string::npos) return "";
     size_t end = s.find_last_not_of(" \t\r\n");
     return s.substr(start, end - start + 1);
+}
+
+std::string quoteIntenseString(const std::string& s) {
+    std::string out = "\"";
+    for (char c : s) {
+        switch (c) {
+            case '\\': out += "\\\\"; break;
+            case '"':  out += "\\\""; break;
+            case '\n': out += "\\n";  break;
+            case '\t': out += "\\t";  break;
+            case '\r': out += "\\r";  break;
+            default:   out.push_back(c); break;
+        }
+    }
+    out.push_back('"');
+    return out;
+}
+
+std::string answerLiteralToken(const Value& v) {
+    switch (v.kind()) {
+        case ValueKind::Nil:   return "nil";
+        case ValueKind::Bool:  return std::get<bool>(v.data) ? "true" : "false";
+        case ValueKind::Int:   return std::to_string(std::get<long long>(v.data));
+        case ValueKind::Float: {
+            std::ostringstream out;
+            out << std::setprecision(17) << std::get<double>(v.data);
+            return out.str();
+        }
+        case ValueKind::Char:  return quoteIntenseString(std::string(1, std::get<char>(v.data)));
+        case ValueKind::Str:   return quoteIntenseString(std::get<std::string>(v.data));
+        default:               return quoteIntenseString(stringifyValue(v));
+    }
 }
 
 std::string fitColumn(std::string text, size_t width) {
@@ -934,7 +969,10 @@ void VM::execute(const Instruction& ins) {
     }
     else if (ins.opcode == "WRITEFILE") {
         std::string path = stringifyValue(resolveOperand(argOrThrow(ins, 0), tape));
-        std::ofstream file(path);
+        std::filesystem::path outPath(path);
+        if (outPath.has_parent_path())
+            std::filesystem::create_directories(outPath.parent_path());
+        std::ofstream file(outPath);
         if (!file) throw std::runtime_error("Cannot write file: " + path);
         file << stringifyValue(tape.current());
     }
@@ -996,6 +1034,12 @@ void VM::execute(const Instruction& ins) {
         auto& s = std::get<std::string>(tape.current().data);
         std::transform(s.begin(), s.end(), s.begin(),
                        [](unsigned char c) { return std::tolower(c); });
+    }
+    else if (ins.opcode == "REVERSE") {
+        if (tape.current().kind() != ValueKind::Str)
+            throw std::runtime_error("REVERSE: current cell is not a string");
+        auto& s = std::get<std::string>(tape.current().data);
+        std::reverse(s.begin(), s.end());
     }
 
     // ---- NLP service operations ------------------------------------------
@@ -1161,6 +1205,79 @@ void VM::execute(const Instruction& ins) {
         Value pattern = parseValue(argOrThrow(ins, 0));
         Value original = tape.current();
         tape.current() = Value(matchPattern(original, pattern));
+    }
+
+    else if (ins.opcode == "JSONGET") {
+        std::string key = stringifyValue(resolveOperand(argOrThrow(ins, 0), tape));
+        Value original = tape.current();
+
+        if (original.kind() == ValueKind::Map) {
+            const auto& map = std::get<Map>(original.data);
+            auto it = map.find(key);
+            tape.current() = it == map.end() ? Value() : it->second;
+        } else if (original.kind() == ValueKind::List && isInteger(key)) {
+            long long idx = std::stoll(key);
+            const auto& list = std::get<List>(original.data);
+            if (idx < 0 || idx >= static_cast<long long>(list.size()))
+                tape.current() = Value();
+            else
+                tape.current() = list[static_cast<size_t>(idx)];
+        } else {
+            tape.current() = Value();
+        }
+    }
+    else if (ins.opcode == "JSONPARSE") {
+        std::string src = stringifyValue(tape.current());
+        size_t pos = 0;
+        tape.current() = parseJsonValue(src, pos);
+    }
+    else if (ins.opcode == "JSONLEN") {
+        if (tape.current().kind() == ValueKind::Map) {
+            tape.current() = Value(static_cast<long long>(std::get<Map>(tape.current().data).size()));
+        } else if (tape.current().kind() == ValueKind::List) {
+            tape.current() = Value(static_cast<long long>(std::get<List>(tape.current().data).size()));
+        } else {
+            tape.current() = Value(static_cast<long long>(0));
+        }
+    }
+    else if (ins.opcode == "JSONSET") {
+        std::string key = stringifyValue(resolveOperand(argOrThrow(ins, 0), tape));
+        Value value = resolveOperand(argOrThrow(ins, 1), tape);
+
+        if (tape.current().kind() == ValueKind::Nil)
+            tape.current() = Value(Map{});
+
+        if (tape.current().kind() == ValueKind::Map) {
+            std::get<Map>(tape.current().data)[key] = value;
+        } else if (tape.current().kind() == ValueKind::List && isInteger(key)) {
+            long long idx = std::stoll(key);
+            if (idx < 0) throw std::runtime_error("JSONSET: negative list index");
+            auto& list = std::get<List>(tape.current().data);
+            if (idx >= static_cast<long long>(list.size()))
+                list.resize(static_cast<size_t>(idx + 1));
+            list[static_cast<size_t>(idx)] = value;
+        } else {
+            throw std::runtime_error("JSONSET: current cell must be map, list, or nil");
+        }
+    }
+    else if (ins.opcode == "JSONPUSH") {
+        Value value = ins.args.empty() ? tape.current() : resolveOperand(argOrThrow(ins, 0), tape);
+        if (tape.current().kind() == ValueKind::Nil)
+            tape.current() = Value(List{});
+        if (tape.current().kind() != ValueKind::List)
+            throw std::runtime_error("JSONPUSH: current cell must be list or nil");
+        std::get<List>(tape.current().data).push_back(value);
+    }
+    else if (ins.opcode == "MAKEANSWERCODE") {
+        Instruction setAnswer;
+        setAnswer.opcode = "SET";
+        setAnswer.args.push_back(answerLiteralToken(tape.current()));
+        tape.current() = Value(Code{setAnswer});
+    }
+    else if (ins.opcode == "MAKEANSWERSOURCE") {
+        tape.current() = Value(std::string("main:\n    SET ") +
+                               answerLiteralToken(tape.current()) +
+                               "\n    PRINT\n    RET\n");
     }
 
     // ---- Code manipulation -----------------------------------------------
