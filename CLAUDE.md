@@ -49,12 +49,14 @@ REPL mode executes one symbolic instruction at a time, prints the active tape af
 
 ## Instruction Categories
 
-Tape nav: `MOVE`, `BACK`, `TAPE`, `SEEK n`, `PRINT_TAPE n`  
-Cell ops: `SET`, `PRINT`, `PRINTJ`, `LEN`/`LENGTH`, `CMP`/`COMPARE`, `COPY`, `DELETE`, `CLEAR_TAPE`/`CLEARTAPE`, `JSONGET`, `JSONPARSE`, `JSONLEN`, `JSONSET`, `JSONPUSH`  
+Tape nav: `MOVE`, `BACK`, `HOME`, `TAPE`, `SEEK n`, `PRINT_TAPE n`  
+Inter-tape: `COPY`, `TAPEREAD`/`TGET`/`PEEK`, `TAPEWRITE`/`TPUT`/`POKE`, `TAPESWAP`/`TSWAP`, `TAPESEND`/`TSEND`/`SEND`, `TAPERECV`/`TRECV`/`RECV`  
+Cell ops: `SET`, `PRINT`, `PRINTJ`, `LEN`/`LENGTH`, `CMP`/`COMPARE`, `DELETE`, `CLEAR_TAPE`/`CLEARTAPE`, `JSONGET`, `JSONHAS`, `JSONKEYS`, `JSONPARSE`, `JSONLEN`, `JSONSET`, `JSONDEL`, `JSONPUSH`  
 Type sys: `TYPE`, `CAST`  
 Arithmetic: `ADD`, `SUB`, `MUL`, `DIV`, `MOD`, `ABS`, `NEG` — binary ops accept literal or `@N`; unary ops work on current cell  
-Strings: `CONCAT`, `SPLIT`, `SUBSTR`, `FIND`, `REPLACE`, `UPPER`, `LOWER`, `REVERSE`  
+Strings: `CONCAT`, `SPLIT`, `JOIN`, `SUBSTR`, `FIND`, `REPLACE`, `UPPER`, `LOWER`, `REVERSE`  
 File I/O: `READFILE`, `WRITEFILE`, `INPUT`  
+PostgreSQL: `DBCONNECT`, `DBSTATUS`, `DBEXEC`, `DBQUERY`, `DBSELECT`, `DBINSERT`, `DBUPDATE`, `DBDELETE`, `DBCLOSE` — loaded through `libpq` at runtime  
 Homoiconic: `EXEC`, `EVAL`, `QUOTE`, `MATCH`, `TRY`, `RAISE`  
 Control flow: `JMP $label`, `JMPIF $label`, `JMPNOT $label`  
 Code manip: `CODELEN`, `CODEGET`, `CODESET`, `CODEAPPEND`, `APPEND`, `MAKEANSWERCODE`, `MAKEANSWERSOURCE`  
@@ -123,6 +125,9 @@ $done:
 | `examples/test_types.intense` | TYPE + CAST for all 9 ValueKind variants |
 | `examples/test_arithmetic.intense` | ADD/SUB/MUL/DIV/MOD, int/float promotion |
 | `examples/test_strings.intense` | CONCAT SPLIT FIND REPLACE SUBSTR UPPER LOWER |
+| `examples/test_join_json_utils.in10s` | JOIN JSONHAS JSONKEYS JSONDEL |
+| `examples/test_inter_tape_comm.in10s` | TAPEREAD TAPEWRITE TAPESWAP TAPESEND TAPERECV |
+| `examples/test_try_catch.in10s` | TRY RAISE catch blocks over Code cells |
 | `examples/test_ml.intense` | All ML ops: stats, normalization, softmax, dotprod, linearreg, predict, kmeans |
 | `examples/test_homoiconic.intense` | EXEC EVAL QUOTE MATCH CODE* APPEND dynamic generation |
 | `examples/test_controlflow.intense` | JMP JMPIF JMPNOT $labels loops nested CALL in loop |

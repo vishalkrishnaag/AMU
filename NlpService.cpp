@@ -49,6 +49,80 @@ std::vector<std::string> tokenStrings(const std::string& text) {
     return out;
 }
 
+bool isStopword(const std::string& token) {
+    static const std::unordered_set<std::string> words = {
+        "a", "an", "the", "this", "that", "these", "those", "only"
+    };
+    return words.count(token) > 0;
+}
+
+bool tokenIsNumber(const std::string& token) {
+    if (token.empty()) return false;
+    return std::all_of(token.begin(), token.end(),
+                       [](unsigned char c) { return std::isdigit(c); });
+}
+
+std::string normalizeEntityToken(const std::string& token) {
+    if (token.size() > 1 && token.back() == 's')
+        return token.substr(0, token.size() - 1);
+    return token;
+}
+
+std::string numberTokenValue(const std::string& token) {
+    static const std::unordered_map<std::string, std::string> words = {
+        {"zero", "0"}, {"one", "1"}, {"two", "2"}, {"three", "3"},
+        {"four", "4"}, {"five", "5"}, {"six", "6"}, {"seven", "7"},
+        {"eight", "8"}, {"nine", "9"}, {"ten", "10"}, {"eleven", "11"},
+        {"twelve", "12"}
+    };
+    auto it = words.find(token);
+    if (it != words.end()) return it->second;
+    return tokenIsNumber(token) ? token : "";
+}
+
+long long numberTokenAsInt(const std::string& token) {
+    std::string value = numberTokenValue(token);
+    if (value.empty()) return 0;
+    return std::stoll(value);
+}
+
+List tokenListValue(const std::vector<std::string>& tokens) {
+    List out;
+    out.reserve(tokens.size());
+    for (const auto& token : tokens)
+        out.emplace_back(token);
+    return out;
+}
+
+Map relationCandidate(const std::string& kind,
+                      const std::string& subject,
+                      const std::string& relation,
+                      const std::string& object,
+                      const std::string& intent,
+                      const std::string& routeHint) {
+    Map item;
+    item["kind"] = Value(kind);
+    item["subject"] = Value(subject);
+    item["relation"] = Value(relation);
+    item["object"] = Value(object);
+    item["intent"] = Value(intent);
+    item["route_hint"] = Value(routeHint);
+    item["logic_weight"] = Value(Map{
+        {"state", Value(std::string("assumed"))},
+        {"support", Value(std::string("single_observation"))},
+        {"scope", Value(std::string("general"))}
+    });
+    return item;
+}
+
+void addRouteHint(List& hints, const std::string& hint) {
+    for (const auto& value : hints) {
+        if (value.kind() == ValueKind::Str && std::get<std::string>(value.data) == hint)
+            return;
+    }
+    hints.emplace_back(hint);
+}
+
 double tokenCosine(const std::string& left, const std::string& right) {
     std::unordered_map<std::string, double> a;
     std::unordered_map<std::string, double> b;
@@ -285,6 +359,159 @@ Map NlpService::contextAnalysis(const std::string& text) const {
     result["adjectives"] = Value(adjectives);
     result["topic"] = Value("general"); // placeholder
     result["backend"] = Value(std::string("core"));
+    return result;
+}
+
+Map NlpService::relationExtraction(const std::string& text) const {
+    std::vector<std::string> tokens = tokenStrings(text);
+    List candidates;
+    List routeHints;
+
+    auto addCandidate = [&](Map item) {
+        std::string route = "";
+        auto it = item.find("route_hint");
+        if (it != item.end() && it->second.kind() == ValueKind::Str)
+            route = std::get<std::string>(it->second.data);
+        if (!route.empty())
+            addRouteHint(routeHints, route);
+        candidates.emplace_back(std::move(item));
+    };
+
+    auto tokenAt = [&](size_t index) -> std::string {
+        return index < tokens.size() ? tokens[index] : "";
+    };
+
+    // what is 8 plus 9 / 2 times 7
+    for (size_t i = 0; i + 2 < tokens.size(); ++i) {
+        std::string op = tokens[i + 1];
+        if ((op == "plus" || op == "add" || op == "added") &&
+            !numberTokenValue(tokens[i]).empty() && !numberTokenValue(tokens[i + 2]).empty()) {
+            Map item = relationCandidate("operation", "arithmetic", "addition", "sum",
+                                         "compute", "addition");
+            item["operands"] = Value(List{
+                Value(numberTokenAsInt(tokens[i])),
+                Value(numberTokenAsInt(tokens[i + 2]))
+            });
+            addCandidate(std::move(item));
+        }
+        if ((op == "times" || op == "multiply" || op == "multiplied") &&
+            !numberTokenValue(tokens[i]).empty() && !numberTokenValue(tokens[i + 2]).empty()) {
+            Map item = relationCandidate("operation", "arithmetic", "multiplication", "product",
+                                         "compute", "multiplication");
+            item["operands"] = Value(List{
+                Value(numberTokenAsInt(tokens[i])),
+                Value(numberTokenAsInt(tokens[i + 2]))
+            });
+            addCandidate(std::move(item));
+        }
+    }
+
+    // reverse the word poet
+    for (size_t i = 0; i + 1 < tokens.size(); ++i) {
+        if (tokens[i] == "reverse") {
+            std::string object;
+            if (i + 2 < tokens.size() && (tokens[i + 1] == "word" || tokens[i + 1] == "string"))
+                object = tokens[i + 2];
+            else
+                object = tokens[i + 1];
+            Map item = relationCandidate("operation", "text", "reverse_word", object,
+                                         "transform", "reverse_word");
+            addCandidate(std::move(item));
+            break;
+        }
+    }
+
+    // how many legs does a cat have
+    if (tokens.size() >= 4 && tokenAt(0) == "how" && tokenAt(1) == "many") {
+        std::string attribute = normalizeEntityToken(tokenAt(2));
+        std::string subject;
+        for (size_t i = 3; i < tokens.size(); ++i) {
+            if (tokens[i] == "have" || tokens[i] == "has")
+                break;
+            if (!isStopword(tokens[i]) && tokens[i] != "does" && tokens[i] != "do")
+                subject = normalizeEntityToken(tokens[i]);
+        }
+        if (!subject.empty() && !attribute.empty()) {
+            Map item = relationCandidate("question", subject, attribute + "_count", "",
+                                         "answer_lookup", "fact_lookup");
+            item["attribute"] = Value(attribute);
+            addCandidate(std::move(item));
+        }
+    }
+
+    // what shape is earth / what is earth shape
+    if (tokens.size() >= 4 && tokenAt(0) == "what") {
+        if (tokenAt(1) == "shape" && (tokenAt(2) == "is" || tokenAt(2) == "are")) {
+            Map item = relationCandidate("question", normalizeEntityToken(tokenAt(3)), "shape", "",
+                                         "answer_lookup", "fact_lookup");
+            addCandidate(std::move(item));
+        } else if ((tokenAt(1) == "is" || tokenAt(1) == "are") && tokenAt(3) == "shape") {
+            Map item = relationCandidate("question", normalizeEntityToken(tokenAt(2)), "shape", "",
+                                         "answer_lookup", "fact_lookup");
+            addCandidate(std::move(item));
+        }
+    }
+
+    // cat has 4 legs / human have only 2 legs
+    for (size_t i = 0; i + 3 < tokens.size(); ++i) {
+        if (tokens[i + 1] == "has" || tokens[i + 1] == "have") {
+            size_t numberIndex = i + 2;
+            if (numberIndex < tokens.size() && isStopword(tokens[numberIndex]))
+                ++numberIndex;
+            if (numberIndex + 1 < tokens.size() && !numberTokenValue(tokens[numberIndex]).empty()) {
+                std::string subject = normalizeEntityToken(tokens[i]);
+                std::string attribute = normalizeEntityToken(tokens[numberIndex + 1]);
+                std::string object = numberTokenValue(tokens[numberIndex]);
+                Map item = relationCandidate("fact", subject, attribute + "_count", object,
+                                             "remember", "fact_lookup");
+                item["attribute"] = Value(attribute);
+                item["answer"] = Value(object);
+                item["generated_logic"] = Value("SET " + object);
+                addCandidate(std::move(item));
+            }
+        }
+    }
+
+    // fish lives in water / bird lives on tree
+    for (size_t i = 0; i + 3 < tokens.size(); ++i) {
+        if ((tokens[i + 1] == "lives" || tokens[i + 1] == "live") &&
+            (tokens[i + 2] == "in" || tokens[i + 2] == "on" || tokens[i + 2] == "at")) {
+            Map item = relationCandidate("fact", normalizeEntityToken(tokens[i]),
+                                         "lives_" + tokens[i + 2], normalizeEntityToken(tokens[i + 3]),
+                                         "remember", "fact_lookup");
+            item["generated_logic"] = Value("SET " + tokens[i + 3]);
+            addCandidate(std::move(item));
+        }
+    }
+
+    // X is Y. Keep this broad but low-assumption.
+    for (size_t i = 0; i + 2 < tokens.size(); ++i) {
+        if (tokens[i + 1] == "is" || tokens[i + 1] == "are") {
+            std::string subject = normalizeEntityToken(tokens[i]);
+            std::string object = normalizeEntityToken(tokens[i + 2]);
+            if (!isStopword(subject) && !isStopword(object) && subject != "what") {
+                Map item = relationCandidate("fact", subject, "is", object,
+                                             "remember", "classification");
+                item["logic_weight"] = Value(Map{
+                    {"state", Value(std::string("weak_assumption"))},
+                    {"support", Value(std::string("surface_statement"))},
+                    {"scope", Value(std::string("contextual"))}
+                });
+                addCandidate(std::move(item));
+            }
+        }
+    }
+
+    Map result;
+    result["backend"] = Value(std::string("core"));
+    result["text"] = Value(text);
+    result["tokens"] = Value(tokenListValue(tokens));
+    result["candidates"] = Value(candidates);
+    result["route_hints"] = Value(routeHints);
+    result["status"] = Value(candidates.empty() ? std::string("no_relation_found")
+                                                : std::string("relations_found"));
+    if (!candidates.empty())
+        result["primary"] = candidates.front();
     return result;
 }
 

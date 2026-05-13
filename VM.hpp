@@ -22,6 +22,7 @@ private:
     NlpService nlp;
     std::stack<Frame> callStack;
     std::vector<Value> argRegs;     // argument register file for SETARG/GETARG
+    void* dbConn = nullptr;          // optional PostgreSQL connection loaded through libpq at runtime
 
 public:
     VM(
@@ -30,6 +31,7 @@ public:
         bool debug,
         bool step = false
     );
+    ~VM();
 
     void run(const std::string& entry);
     void runBlock(const Code& code);

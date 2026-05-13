@@ -1,7 +1,7 @@
 CXX = g++
 CXXFLAGS = -std=c++17 -O3 -march=native
 CPPFLAGS = -Ithird_party/eigen -I/usr/include/eigen3
-LDFLAGS =
+LDFLAGS = -ldl
 
 SRC = main.cpp VM.cpp Lexer.cpp Parser.cpp FunctionLoader.cpp NlpService.cpp
 TARGET = intense.out

@@ -96,8 +96,21 @@ Resolved relative to the importing file. Circular imports are detected and skipp
 |-------------|-------------|
 | `MOVE n`    | Move tape pointer forward by `n` cells |
 | `BACK n`    | Move tape pointer backward by `n` cells |
+| `SEEK n`    | Set the active tape pointer to cell `n` |
+| `HOME`      | Reset the active tape pointer to cell 0 |
 | `TAPE n`    | Switch active tape to index `n` |
 | `PRINT_TAPE n` | Print tape `n` without switching the active tape |
+
+### Inter-Tape Communication
+
+| Instruction | Description |
+|-------------|-------------|
+| `COPY tape` | Copy current cell to the destination tape's current pointer |
+| `TAPEREAD tape [cell]` / `TGET` / `PEEK` | Read another tape cell into the current cell; default cell is that tape's pointer |
+| `TAPEWRITE tape [cell] [value]` / `TPUT` / `POKE` | Write current cell, or `value`, into another tape cell |
+| `TAPESWAP tape [cell]` / `TSWAP` | Swap current cell with another tape cell |
+| `TAPESEND tape [cell] [value]` / `TSEND` / `SEND` | Append current cell, or `value`, to a list mailbox on another tape |
+| `TAPERECV tape [cell]` / `TRECV` / `RECV` | Pop the oldest value from a list mailbox into the current cell; empty mailbox gives `nil` |
 
 ### Cell Operations
 
@@ -108,7 +121,14 @@ Resolved relative to the importing file. Circular imports are detected and skipp
 | `PRINTJ`       | Print the current cell as JSON |
 | `LEN`          | Store the cell count of the current tape into the current cell |
 | `CMP n`        | Compare current cell with tape `n`'s current cell; store `bool` result |
+| `DELETE`       | Delete the active tape's current cell |
 | `CLEAR_TAPE`   | Clear occupied cells on the active sparse tape and reset pointer to 0 |
+| `JSONGET key`  | Read a map key or list index from the current JSON-like value |
+| `JSONHAS key`  | Store whether a map key or list index exists |
+| `JSONKEYS`     | Store sorted map keys, or list indexes, as a List |
+| `JSONSET key value` | Set a map key or list index |
+| `JSONDEL key`  | Delete a map key or list index |
+| `JSONPUSH value` | Append to current List, creating one from nil if needed |
 
 ### Type System
 
@@ -175,11 +195,13 @@ $done:
 |--------------------|-------------|
 | `CONCAT value`     | Append `value` (stringified) to current cell |
 | `SPLIT delim`      | Split current string by delimiter; store List of Str |
+| `JOIN [delim]`     | Join current List into a Str using `delim` |
 | `SUBSTR start len` | Extract substring from current Str cell |
 | `FIND sub`         | Store 0-based index of first occurrence, or −1 |
 | `REPLACE old new`  | Replace all occurrences of `old` with `new` in current Str |
 | `UPPER`            | Convert current Str to uppercase in place |
 | `LOWER`            | Convert current Str to lowercase in place |
+| `REVERSE`          | Reverse current Str in place |
 
 ### File I/O
 
@@ -307,6 +329,9 @@ If execution throws and a catch cell is provided, the current cell is replaced w
 | `examples/test_types.intense` | TYPE, CAST, all ValueKind variants |
 | `examples/test_ml.intense` | MEANVAL, STDDEV, NORMALIZE, ZSCORE, SOFTMAX, DOTPROD, LINEARREG, PREDICT, KMEANS |
 | `examples/test_strings.intense` | CONCAT, SPLIT, FIND, REPLACE, SUBSTR, UPPER, LOWER |
+| `examples/test_join_json_utils.in10s` | JOIN, JSONHAS, JSONKEYS, JSONDEL |
+| `examples/test_inter_tape_comm.in10s` | TAPEREAD, TAPEWRITE, TAPESWAP, TAPESEND, TAPERECV |
+| `examples/test_try_catch.in10s` | TRY, RAISE, catch Code cells |
 | `examples/test_arithmetic.intense` | ADD, SUB, MUL, DIV, MOD, int/float promotion, `@N` cell references |
 | `examples/example_json.intense` | JSON object/array storage |
 | `examples/example_import.intense` | IMPORT directive |

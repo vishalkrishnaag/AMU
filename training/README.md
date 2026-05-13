@@ -25,8 +25,33 @@ facts.json                 learned/common facts
 algorithm_templates.json   reusable route names and intent
 training_examples.json     reserved learned-example store
 test_cases.tsv             test inputs and expected outputs
+postgres_schema.sql        optional Postgres schema for event/link and logic-network memory
 generated_outputs/latest/  latest generated runners, candidates, traces, report
 ```
+
+The VM also has optional PostgreSQL opcodes: `DBCONNECT`, `DBSTATUS`, `DBEXEC`,
+`DBQUERY`, `DBSELECT`, `DBINSERT`, `DBUPDATE`, `DBDELETE`, and `DBCLOSE`. They
+dynamically load `libpq` at runtime, so the VM still builds without Postgres
+installed. See `examples/postgres_memory.in10s`.
+
+## Postgres Logic Network
+
+`postgres_schema.sql` now has two layers:
+
+- `poet_memory_events` and `poet_memory_links`: time-ordered observations,
+  outputs, feedback, and event-to-event links.
+- `logic_nodes` and `logic_edges`: stable concept nodes and weighted
+  relationships that Poet can retrieve as reasoning context.
+
+For the local AMU database:
+
+```bash
+./intense.out examples/test_db_amu_logic_network.in10s main 4
+```
+
+That example stores concepts like `cat`, `human`, `legs`, `count_4`, and edges
+such as `cat -> legs_count -> count_4`. The final query returns the retrieved
+answer path and generated logic (`SET 4`).
 
 Generated Poet-code proposals are stored under
 `training/common_memory/generated_outputs/latest/proposed_poet/`. They are not

@@ -14,6 +14,7 @@ public:
     Map diff(const std::string& left, const std::string& right) const;
     Map grammarCheck(const std::string& text) const;
     Map contextAnalysis(const std::string& text) const;
+    Map relationExtraction(const std::string& text) const;
     Map logicalOperation(const std::string& statement, const std::string& operation) const;
     Map fuzzyLogic(const std::string& input, double membership) const;
     Map probabilityCalc(const std::string& data, const std::string& type) const;

@@ -12,6 +12,7 @@
 #include <numeric>
 #include <vector>
 #include <filesystem>
+#include <dlfcn.h>
 #include <unistd.h>
 
 // ---------------------------------------------------------------------------
@@ -22,6 +23,8 @@ namespace {
 // ---- String utilities ------------------------------------------------------
 
 std::string stringifyValue(const Value& value);
+const std::string& argOrThrow(const Instruction& ins, size_t index);
+Value resolveOperand(const std::string& arg, Tape& tape);
 
 bool isInteger(const std::string& token) {
     if (token.empty()) return false;
@@ -357,6 +360,49 @@ Value resolveOperand(const std::string& arg, Tape& tape) {
     return parseValue(arg);
 }
 
+long long integerValue(const Value& value, const std::string& opcode, const std::string& role) {
+    switch (value.kind()) {
+        case ValueKind::Int:
+            return std::get<long long>(value.data);
+        case ValueKind::Float:
+            return static_cast<long long>(std::get<double>(value.data));
+        case ValueKind::Bool:
+            return std::get<bool>(value.data) ? 1 : 0;
+        case ValueKind::Char:
+            return static_cast<long long>(std::get<char>(value.data));
+        case ValueKind::Str: {
+            const auto& s = std::get<std::string>(value.data);
+            if (isInteger(s)) return std::stoll(s);
+            if (isFloat(s))   return static_cast<long long>(std::stod(s));
+            break;
+        }
+        default:
+            break;
+    }
+    throw std::runtime_error(opcode + ": " + role + " must be numeric");
+}
+
+long long integerOperand(const std::string& arg, Tape& tape, const std::string& opcode, const std::string& role) {
+    return integerValue(resolveOperand(arg, tape), opcode, role);
+}
+
+int checkedTapeIndex(long long raw, size_t tapeCount, const std::string& opcode) {
+    if (raw < 0 || raw >= static_cast<long long>(tapeCount))
+        throw std::runtime_error(opcode + ": tape index out of bounds: " + std::to_string(raw));
+    return static_cast<int>(raw);
+}
+
+int tapeIndexArg(const Instruction& ins, size_t argIndex, Tape& tape, size_t tapeCount) {
+    return checkedTapeIndex(integerOperand(argOrThrow(ins, argIndex), tape, ins.opcode, "tape index"),
+                            tapeCount, ins.opcode);
+}
+
+long long cellIndexArgOrPtr(const Instruction& ins, size_t argIndex, Tape& tape, const Tape& targetTape) {
+    if (ins.args.size() <= argIndex)
+        return targetTape.ptr;
+    return integerOperand(argOrThrow(ins, argIndex), tape, ins.opcode, "cell index");
+}
+
 // ---- Numeric coercion (for arithmetic / ML) --------------------------------
 
 double numericValue(const Value& v) {
@@ -514,6 +560,276 @@ std::string compactDisplayValue(const Value& value, size_t maxWidth = 14) {
     return out.substr(0, maxWidth - 3) + "...";
 }
 
+// ---- Optional PostgreSQL/libpq bridge --------------------------------------
+
+struct PgApi {
+    bool attempted = false;
+    void* handle = nullptr;
+
+    using PGconn = void;
+    using PGresult = void;
+
+    PGconn* (*PQconnectdb)(const char*) = nullptr;
+    int (*PQstatus)(const PGconn*) = nullptr;
+    char* (*PQerrorMessage)(const PGconn*) = nullptr;
+    void (*PQfinish)(PGconn*) = nullptr;
+    PGresult* (*PQexec)(PGconn*, const char*) = nullptr;
+    int (*PQresultStatus)(const PGresult*) = nullptr;
+    char* (*PQresStatus)(int) = nullptr;
+    int (*PQntuples)(const PGresult*) = nullptr;
+    int (*PQnfields)(const PGresult*) = nullptr;
+    char* (*PQfname)(const PGresult*, int) = nullptr;
+    char* (*PQgetvalue)(const PGresult*, int, int) = nullptr;
+    int (*PQgetisnull)(const PGresult*, int, int) = nullptr;
+    char* (*PQcmdTuples)(PGresult*) = nullptr;
+    char* (*PQescapeLiteral)(PGconn*, const char*, size_t) = nullptr;
+    char* (*PQescapeIdentifier)(PGconn*, const char*, size_t) = nullptr;
+    void (*PQfreemem)(void*) = nullptr;
+    void (*PQclear)(PGresult*) = nullptr;
+
+    template <typename T>
+    bool loadSymbol(T& target, const char* name, std::string& error) {
+        target = reinterpret_cast<T>(dlsym(handle, name));
+        if (!target) {
+            error = std::string("missing libpq symbol: ") + name;
+            return false;
+        }
+        return true;
+    }
+
+    bool load(std::string& error) {
+        if (handle) return true;
+        if (attempted) {
+            error = "libpq is not available; install PostgreSQL client libraries";
+            return false;
+        }
+        attempted = true;
+
+        handle = dlopen("libpq.so.5", RTLD_NOW | RTLD_LOCAL);
+        if (!handle)
+            handle = dlopen("libpq.so", RTLD_NOW | RTLD_LOCAL);
+        if (!handle) {
+            error = "libpq is not available; install PostgreSQL client libraries";
+            return false;
+        }
+
+        return loadSymbol(PQconnectdb, "PQconnectdb", error)
+            && loadSymbol(PQstatus, "PQstatus", error)
+            && loadSymbol(PQerrorMessage, "PQerrorMessage", error)
+            && loadSymbol(PQfinish, "PQfinish", error)
+            && loadSymbol(PQexec, "PQexec", error)
+            && loadSymbol(PQresultStatus, "PQresultStatus", error)
+            && loadSymbol(PQresStatus, "PQresStatus", error)
+            && loadSymbol(PQntuples, "PQntuples", error)
+            && loadSymbol(PQnfields, "PQnfields", error)
+            && loadSymbol(PQfname, "PQfname", error)
+            && loadSymbol(PQgetvalue, "PQgetvalue", error)
+            && loadSymbol(PQgetisnull, "PQgetisnull", error)
+            && loadSymbol(PQcmdTuples, "PQcmdTuples", error)
+            && loadSymbol(PQescapeLiteral, "PQescapeLiteral", error)
+            && loadSymbol(PQescapeIdentifier, "PQescapeIdentifier", error)
+            && loadSymbol(PQfreemem, "PQfreemem", error)
+            && loadSymbol(PQclear, "PQclear", error);
+    }
+};
+
+PgApi& pgApi() {
+    static PgApi api;
+    return api;
+}
+
+PgApi& requirePgApi() {
+    std::string error;
+    PgApi& api = pgApi();
+    if (!api.load(error))
+        throw std::runtime_error("PostgreSQL support unavailable: " + error);
+    return api;
+}
+
+std::string pgError(PgApi& api, void* conn) {
+    if (!conn) return "not connected";
+    char* msg = api.PQerrorMessage(static_cast<PgApi::PGconn*>(conn));
+    return msg ? trimStr(msg) : "";
+}
+
+void requireDbConnected(void* conn) {
+    if (!conn)
+        throw std::runtime_error("DB: not connected; call DBCONNECT first");
+}
+
+std::string sqlFromInstructionOrCell(const Instruction& ins, Tape& tape) {
+    if (ins.args.empty())
+        return stringifyValue(tape.current());
+    return stringifyValue(resolveOperand(argOrThrow(ins, 0), tape));
+}
+
+std::string pgResultStatusName(PgApi& api, int status) {
+    char* name = api.PQresStatus(status);
+    return name ? std::string(name) : std::to_string(status);
+}
+
+Value pgRowsValue(PgApi& api, PgApi::PGresult* result) {
+    int rowCount = api.PQntuples(result);
+    int fieldCount = api.PQnfields(result);
+
+    List rows;
+    rows.reserve(static_cast<size_t>(rowCount));
+    for (int row = 0; row < rowCount; ++row) {
+        Map item;
+        for (int col = 0; col < fieldCount; ++col) {
+            char* name = api.PQfname(result, col);
+            std::string key = name ? std::string(name) : ("column_" + std::to_string(col));
+            if (api.PQgetisnull(result, row, col)) {
+                item[key] = Value();
+            } else {
+                char* raw = api.PQgetvalue(result, row, col);
+                item[key] = Value(std::string(raw ? raw : ""));
+            }
+        }
+        rows.emplace_back(std::move(item));
+    }
+
+    return Value(std::move(rows));
+}
+
+Value pgQueryMap(PgApi& api, PgApi::PGresult* result, int status) {
+    Map out;
+    out["ok"] = Value(status == 1 || status == 2);
+    out["status"] = Value(pgResultStatusName(api, status));
+    out["row_count"] = Value(static_cast<long long>(api.PQntuples(result)));
+    out["field_count"] = Value(static_cast<long long>(api.PQnfields(result)));
+
+    char* cmdTuples = api.PQcmdTuples(result);
+    out["rows_affected"] = Value(std::string(cmdTuples ? cmdTuples : ""));
+
+    if (status == 2)
+        out["rows"] = pgRowsValue(api, result);
+
+    return Value(std::move(out));
+}
+
+Value pgRunSql(PgApi& api, void* conn, const std::string& sql, bool rowsOnly, const std::string& opcode) {
+    PgApi::PGresult* result = api.PQexec(static_cast<PgApi::PGconn*>(conn), sql.c_str());
+    if (!result)
+        throw std::runtime_error(opcode + ": " + pgError(api, conn));
+
+    int status = api.PQresultStatus(result);
+    bool ok = status == 1 || status == 2; // PGRES_COMMAND_OK or PGRES_TUPLES_OK
+    if (!ok) {
+        std::string error = pgError(api, conn);
+        api.PQclear(result);
+        throw std::runtime_error(opcode + ": " + error);
+    }
+
+    Value out;
+    if (rowsOnly) {
+        if (status != 2) {
+            api.PQclear(result);
+            throw std::runtime_error(opcode + ": SQL did not return rows");
+        }
+        out = pgRowsValue(api, result);
+    } else {
+        out = pgQueryMap(api, result, status);
+    }
+
+    api.PQclear(result);
+    return out;
+}
+
+std::string pgQuoteLiteral(PgApi& api, void* conn, const std::string& raw) {
+    char* escaped = api.PQescapeLiteral(static_cast<PgApi::PGconn*>(conn), raw.c_str(), raw.size());
+    if (!escaped)
+        throw std::runtime_error("DB: failed to quote SQL literal: " + pgError(api, conn));
+    std::string out(escaped);
+    api.PQfreemem(escaped);
+    return out;
+}
+
+std::string pgQuoteIdentifier(PgApi& api, void* conn, const std::string& raw) {
+    char* escaped = api.PQescapeIdentifier(static_cast<PgApi::PGconn*>(conn), raw.c_str(), raw.size());
+    if (!escaped)
+        throw std::runtime_error("DB: failed to quote SQL identifier: " + pgError(api, conn));
+    std::string out(escaped);
+    api.PQfreemem(escaped);
+    return out;
+}
+
+std::string pgValueLiteral(PgApi& api, void* conn, const Value& value) {
+    switch (value.kind()) {
+        case ValueKind::Nil:
+            return "NULL";
+        case ValueKind::Bool:
+            return std::get<bool>(value.data) ? "TRUE" : "FALSE";
+        case ValueKind::Int:
+            return std::to_string(std::get<long long>(value.data));
+        case ValueKind::Float: {
+            std::ostringstream out;
+            out << std::setprecision(17) << std::get<double>(value.data);
+            return out.str();
+        }
+        case ValueKind::Char:
+        case ValueKind::Str:
+            return pgQuoteLiteral(api, conn, stringifyValue(value));
+        case ValueKind::List:
+        case ValueKind::Map:
+        case ValueKind::Code:
+            return pgQuoteLiteral(api, conn, stringifyJsonValue(value));
+    }
+    return "NULL";
+}
+
+const Map& requireMapValue(const Value& value, const std::string& opcode) {
+    if (value.kind() != ValueKind::Map)
+        throw std::runtime_error(opcode + ": value must be a map/object");
+    return std::get<Map>(value.data);
+}
+
+Value dbMapArgOrCurrent(const Instruction& ins, size_t index, Tape& tape, const std::string& opcode) {
+    if (ins.args.size() <= index)
+        return tape.current();
+    return resolveOperand(argOrThrow(ins, index), tape);
+}
+
+std::string buildInsertSql(PgApi& api, void* conn, const std::string& table, const Map& values) {
+    if (values.empty())
+        throw std::runtime_error("DBINSERT: map/object must not be empty");
+
+    std::string columns;
+    std::string literals;
+    bool first = true;
+    for (const auto& [key, value] : values) {
+        if (!first) {
+            columns += ", ";
+            literals += ", ";
+        }
+        first = false;
+        columns += pgQuoteIdentifier(api, conn, key);
+        literals += pgValueLiteral(api, conn, value);
+    }
+
+    return "INSERT INTO " + pgQuoteIdentifier(api, conn, table) +
+           " (" + columns + ") VALUES (" + literals + ")";
+}
+
+std::string buildUpdateSql(PgApi& api, void* conn, const std::string& table, const Map& values, const std::string& where) {
+    if (values.empty())
+        throw std::runtime_error("DBUPDATE: map/object must not be empty");
+    if (trimStr(where).empty())
+        throw std::runtime_error("DBUPDATE: WHERE clause is required");
+
+    std::string assignments;
+    bool first = true;
+    for (const auto& [key, value] : values) {
+        if (!first)
+            assignments += ", ";
+        first = false;
+        assignments += pgQuoteIdentifier(api, conn, key) + " = " + pgValueLiteral(api, conn, value);
+    }
+
+    return "UPDATE " + pgQuoteIdentifier(api, conn, table) +
+           " SET " + assignments + " WHERE " + where;
+}
+
 // ---- Equality (strict type-and-value match) --------------------------------
 
 bool valuesEqual(const Value& a, const Value& b) {
@@ -634,6 +950,15 @@ List eigenVectorToList(const Eigen::VectorXd& v) {
 VM::VM(const std::string& file, int tapeCount, bool debug, bool step)
     : tapes(tapeCount), debugMode(debug), stepMode(step), loader(file)
 {}
+
+VM::~VM() {
+    if (dbConn) {
+        PgApi& api = pgApi();
+        if (api.PQfinish)
+            api.PQfinish(static_cast<PgApi::PGconn*>(dbConn));
+        dbConn = nullptr;
+    }
+}
 
 void VM::debug(const Instruction& ins) {
     if (!debugMode) return;
@@ -823,6 +1148,9 @@ void VM::execute(const Instruction& ins) {
     else if (ins.opcode == "SEEK") {
         tape.ptr = std::stoll(argOrThrow(ins, 0));
     }
+    else if (ins.opcode == "HOME") {
+        tape.ptr = 0;
+    }
 
     else if (ins.opcode == "TAPE") {
         int target = std::stoi(argOrThrow(ins, 0));
@@ -850,7 +1178,53 @@ void VM::execute(const Instruction& ins) {
             throw std::runtime_error("COPY tape index out of bounds: " + std::to_string(dest));
         tapes[dest].cells[tapes[dest].ptr] = tape.current();
     }
-    else if (ins.opcode == "CLEAR_TAPE") {
+    else if (ins.opcode == "TAPEREAD" || ins.opcode == "TGET" || ins.opcode == "PEEK") {
+        int src = tapeIndexArg(ins, 0, tape, tapes.size());
+        long long srcCell = cellIndexArgOrPtr(ins, 1, tape, tapes[src]);
+        tape.current() = tapes[src].cells[srcCell];
+    }
+    else if (ins.opcode == "TAPEWRITE" || ins.opcode == "TPUT" || ins.opcode == "POKE") {
+        int dest = tapeIndexArg(ins, 0, tape, tapes.size());
+        long long destCell = cellIndexArgOrPtr(ins, 1, tape, tapes[dest]);
+        Value value = ins.args.size() > 2 ? resolveOperand(argOrThrow(ins, 2), tape) : tape.current();
+        tapes[dest].cells[destCell] = value;
+    }
+    else if (ins.opcode == "TAPESWAP" || ins.opcode == "TSWAP") {
+        int other = tapeIndexArg(ins, 0, tape, tapes.size());
+        long long otherCell = cellIndexArgOrPtr(ins, 1, tape, tapes[other]);
+        std::swap(tape.current(), tapes[other].cells[otherCell]);
+    }
+    else if (ins.opcode == "TAPESEND" || ins.opcode == "TSEND" || ins.opcode == "SEND") {
+        int dest = tapeIndexArg(ins, 0, tape, tapes.size());
+        long long channel = cellIndexArgOrPtr(ins, 1, tape, tapes[dest]);
+        Value value = ins.args.size() > 2 ? resolveOperand(argOrThrow(ins, 2), tape) : tape.current();
+        Value& inbox = tapes[dest].cells[channel];
+        if (inbox.kind() == ValueKind::Nil)
+            inbox = Value(List{});
+        if (inbox.kind() != ValueKind::List)
+            throw std::runtime_error(ins.opcode + ": destination cell must be a list or nil");
+        std::get<List>(inbox.data).push_back(value);
+    }
+    else if (ins.opcode == "TAPERECV" || ins.opcode == "TRECV" || ins.opcode == "RECV") {
+        int src = tapeIndexArg(ins, 0, tape, tapes.size());
+        long long channel = cellIndexArgOrPtr(ins, 1, tape, tapes[src]);
+        Value& inbox = tapes[src].cells[channel];
+        if (inbox.kind() == ValueKind::Nil) {
+            tape.current() = Value();
+        } else if (inbox.kind() == ValueKind::List) {
+            auto& queue = std::get<List>(inbox.data);
+            if (queue.empty()) {
+                tape.current() = Value();
+            } else {
+                Value message = queue.front();
+                queue.erase(queue.begin());
+                tape.current() = message;
+            }
+        } else {
+            throw std::runtime_error(ins.opcode + ": source cell must be a list or nil");
+        }
+    }
+    else if (ins.opcode == "CLEAR_TAPE" || ins.opcode == "CLEARTAPE") {
         tape.cells.clear();
         tape.ptr = 0;
     }
@@ -977,15 +1351,123 @@ void VM::execute(const Instruction& ins) {
         file << stringifyValue(tape.current());
     }
 
+    // ---- PostgreSQL DB I/O ------------------------------------------------
+    // These opcodes dynamically load libpq at runtime. The interpreter still
+    // builds when PostgreSQL client libraries are absent; DB opcodes then raise
+    // a clear runtime error.
+
+    else if (ins.opcode == "DBCONNECT") {
+        PgApi& api = requirePgApi();
+        std::string conninfo = sqlFromInstructionOrCell(ins, tape);
+
+        if (dbConn) {
+            api.PQfinish(static_cast<PgApi::PGconn*>(dbConn));
+            dbConn = nullptr;
+        }
+
+        PgApi::PGconn* conn = api.PQconnectdb(conninfo.c_str());
+        if (!conn)
+            throw std::runtime_error("DBCONNECT: failed to allocate connection");
+        if (api.PQstatus(conn) != 0) {
+            std::string error = pgError(api, conn);
+            api.PQfinish(conn);
+            throw std::runtime_error("DBCONNECT: " + error);
+        }
+
+        dbConn = conn;
+        Map out;
+        out["connected"] = Value(true);
+        out["backend"] = Value(std::string("postgres"));
+        tape.current() = Value(std::move(out));
+    }
+    else if (ins.opcode == "DBCLOSE") {
+        if (dbConn) {
+            PgApi& api = requirePgApi();
+            api.PQfinish(static_cast<PgApi::PGconn*>(dbConn));
+            dbConn = nullptr;
+        }
+        Map out;
+        out["connected"] = Value(false);
+        out["backend"] = Value(std::string("postgres"));
+        tape.current() = Value(std::move(out));
+    }
+    else if (ins.opcode == "DBSTATUS") {
+        Map out;
+        out["connected"] = Value(dbConn != nullptr);
+        out["backend"] = Value(std::string("postgres"));
+        tape.current() = Value(std::move(out));
+    }
+    else if (ins.opcode == "DBEXEC" || ins.opcode == "DBQUERY") {
+        requireDbConnected(dbConn);
+        PgApi& api = requirePgApi();
+        std::string sql = sqlFromInstructionOrCell(ins, tape);
+        tape.current() = pgRunSql(api, dbConn, sql, ins.opcode == "DBQUERY", ins.opcode);
+    }
+    else if (ins.opcode == "DBSELECT") {
+        requireDbConnected(dbConn);
+        PgApi& api = requirePgApi();
+        std::string table = stringifyValue(resolveOperand(argOrThrow(ins, 0), tape));
+        std::string sql = "SELECT * FROM " + pgQuoteIdentifier(api, dbConn, table);
+        if (ins.args.size() > 1) {
+            std::string where = stringifyValue(resolveOperand(argOrThrow(ins, 1), tape));
+            if (!trimStr(where).empty())
+                sql += " WHERE " + where;
+        }
+        tape.current() = pgRunSql(api, dbConn, sql, true, ins.opcode);
+    }
+    else if (ins.opcode == "DBINSERT") {
+        requireDbConnected(dbConn);
+        PgApi& api = requirePgApi();
+        std::string table = stringifyValue(resolveOperand(argOrThrow(ins, 0), tape));
+        Value values = dbMapArgOrCurrent(ins, 1, tape, ins.opcode);
+        std::string sql = buildInsertSql(api, dbConn, table, requireMapValue(values, ins.opcode));
+        tape.current() = pgRunSql(api, dbConn, sql, false, ins.opcode);
+    }
+    else if (ins.opcode == "DBUPDATE") {
+        requireDbConnected(dbConn);
+        PgApi& api = requirePgApi();
+        std::string table = stringifyValue(resolveOperand(argOrThrow(ins, 0), tape));
+        std::string where = stringifyValue(resolveOperand(argOrThrow(ins, 1), tape));
+        Value values = dbMapArgOrCurrent(ins, 2, tape, ins.opcode);
+        std::string sql = buildUpdateSql(api, dbConn, table, requireMapValue(values, ins.opcode), where);
+        tape.current() = pgRunSql(api, dbConn, sql, false, ins.opcode);
+    }
+    else if (ins.opcode == "DBDELETE") {
+        requireDbConnected(dbConn);
+        PgApi& api = requirePgApi();
+        std::string table = stringifyValue(resolveOperand(argOrThrow(ins, 0), tape));
+        std::string where = stringifyValue(resolveOperand(argOrThrow(ins, 1), tape));
+        if (trimStr(where).empty())
+            throw std::runtime_error("DBDELETE: WHERE clause is required");
+        std::string sql = "DELETE FROM " + pgQuoteIdentifier(api, dbConn, table) + " WHERE " + where;
+        tape.current() = pgRunSql(api, dbConn, sql, false, ins.opcode);
+    }
+    else if (ins.opcode == "DBLITERAL") {
+        requireDbConnected(dbConn);
+        PgApi& api = requirePgApi();
+        Value value = ins.args.empty() ? tape.current() : resolveOperand(argOrThrow(ins, 0), tape);
+        tape.current() = Value(pgValueLiteral(api, dbConn, value));
+    }
+    else if (ins.opcode == "DBIDENT") {
+        requireDbConnected(dbConn);
+        PgApi& api = requirePgApi();
+        std::string value = ins.args.empty()
+            ? stringifyValue(tape.current())
+            : stringifyValue(resolveOperand(argOrThrow(ins, 0), tape));
+        tape.current() = Value(pgQuoteIdentifier(api, dbConn, value));
+    }
+
     // ---- String operations ------------------------------------------------
 
     else if (ins.opcode == "CONCAT") {
-        std::string rhs = stringifyValue(parseValue(argOrThrow(ins, 0)));
+        std::string rhs = stringifyValue(resolveOperand(argOrThrow(ins, 0), tape));
         tape.current() = Value(stringifyValue(tape.current()) + rhs);
     }
     else if (ins.opcode == "SPLIT") {
-        std::string delim = stringifyValue(parseValue(argOrThrow(ins, 0)));
+        std::string delim = stringifyValue(resolveOperand(argOrThrow(ins, 0), tape));
         std::string src   = stringifyValue(tape.current());
+        if (delim.empty())
+            throw std::runtime_error("SPLIT: delimiter must not be empty");
         List out;
         size_t pos = 0, prev = 0;
         while ((pos = src.find(delim, prev)) != std::string::npos) {
@@ -993,6 +1475,18 @@ void VM::execute(const Instruction& ins) {
             prev = pos + delim.size();
         }
         out.emplace_back(src.substr(prev));
+        tape.current() = Value(std::move(out));
+    }
+    else if (ins.opcode == "JOIN") {
+        std::string delim = ins.args.empty() ? "" : stringifyValue(resolveOperand(argOrThrow(ins, 0), tape));
+        auto* list = std::get_if<List>(&tape.current().data);
+        if (!list)
+            throw std::runtime_error("JOIN: current cell must be a list");
+        std::string out;
+        for (size_t i = 0; i < list->size(); ++i) {
+            if (i > 0) out += delim;
+            out += stringifyValue((*list)[i]);
+        }
         tape.current() = Value(std::move(out));
     }
     else if (ins.opcode == "SUBSTR") {
@@ -1003,15 +1497,15 @@ void VM::execute(const Instruction& ins) {
         tape.current() = Value(std::get<std::string>(tape.current().data).substr(start, len));
     }
     else if (ins.opcode == "FIND") {
-        std::string sub = stringifyValue(parseValue(argOrThrow(ins, 0)));
+        std::string sub = stringifyValue(resolveOperand(argOrThrow(ins, 0), tape));
         if (tape.current().kind() != ValueKind::Str)
             throw std::runtime_error("FIND: current cell is not a string");
         auto pos = std::get<std::string>(tape.current().data).find(sub);
         tape.current() = Value(static_cast<long long>(pos));
     }
     else if (ins.opcode == "REPLACE") {
-        std::string oldStr = stringifyValue(parseValue(argOrThrow(ins, 0)));
-        std::string repStr = stringifyValue(parseValue(argOrThrow(ins, 1)));
+        std::string oldStr = stringifyValue(resolveOperand(argOrThrow(ins, 0), tape));
+        std::string repStr = stringifyValue(resolveOperand(argOrThrow(ins, 1), tape));
         if (tape.current().kind() != ValueKind::Str)
             throw std::runtime_error("REPLACE: current cell is not a string");
         auto& s = std::get<std::string>(tape.current().data);
@@ -1090,6 +1584,9 @@ void VM::execute(const Instruction& ins) {
     }
     else if (ins.opcode == "NLPCONTEXT") {
         tape.current() = Value(nlp.contextAnalysis(stringifyValue(tape.current())));
+    }
+    else if (ins.opcode == "NLPRELATIONS") {
+        tape.current() = Value(nlp.relationExtraction(stringifyValue(tape.current())));
     }
     else if (ins.opcode == "NLPLOGIC") {
         std::string operation = ins.args.empty() ? "contrapositive" : stringifyValue(parseValue(ins.args[0]));
@@ -1226,6 +1723,40 @@ void VM::execute(const Instruction& ins) {
             tape.current() = Value();
         }
     }
+    else if (ins.opcode == "JSONHAS") {
+        std::string key = stringifyValue(resolveOperand(argOrThrow(ins, 0), tape));
+        Value original = tape.current();
+        bool found = false;
+
+        if (original.kind() == ValueKind::Map) {
+            const auto& map = std::get<Map>(original.data);
+            found = map.find(key) != map.end();
+        } else if (original.kind() == ValueKind::List && isInteger(key)) {
+            long long idx = std::stoll(key);
+            const auto& list = std::get<List>(original.data);
+            found = idx >= 0 && idx < static_cast<long long>(list.size());
+        }
+
+        tape.current() = Value(found);
+    }
+    else if (ins.opcode == "JSONKEYS") {
+        List out;
+        if (tape.current().kind() == ValueKind::Map) {
+            std::vector<std::string> keys;
+            for (const auto& [key, _] : std::get<Map>(tape.current().data))
+                keys.push_back(key);
+            std::sort(keys.begin(), keys.end());
+            for (const auto& key : keys)
+                out.emplace_back(key);
+        } else if (tape.current().kind() == ValueKind::List) {
+            const auto& list = std::get<List>(tape.current().data);
+            for (size_t i = 0; i < list.size(); ++i)
+                out.emplace_back(static_cast<long long>(i));
+        } else {
+            throw std::runtime_error("JSONKEYS: current cell must be map or list");
+        }
+        tape.current() = Value(std::move(out));
+    }
     else if (ins.opcode == "JSONPARSE") {
         std::string src = stringifyValue(tape.current());
         size_t pos = 0;
@@ -1258,6 +1789,21 @@ void VM::execute(const Instruction& ins) {
             list[static_cast<size_t>(idx)] = value;
         } else {
             throw std::runtime_error("JSONSET: current cell must be map, list, or nil");
+        }
+    }
+    else if (ins.opcode == "JSONDEL") {
+        std::string key = stringifyValue(resolveOperand(argOrThrow(ins, 0), tape));
+        if (tape.current().kind() == ValueKind::Nil) {
+            // Deleting from nil is a no-op.
+        } else if (tape.current().kind() == ValueKind::Map) {
+            std::get<Map>(tape.current().data).erase(key);
+        } else if (tape.current().kind() == ValueKind::List && isInteger(key)) {
+            long long idx = std::stoll(key);
+            auto& list = std::get<List>(tape.current().data);
+            if (idx >= 0 && idx < static_cast<long long>(list.size()))
+                list.erase(list.begin() + idx);
+        } else {
+            throw std::runtime_error("JSONDEL: current cell must be map, list, or nil");
         }
     }
     else if (ins.opcode == "JSONPUSH") {
@@ -1513,7 +2059,7 @@ void VM::execute(const Instruction& ins) {
         size_t n = static_cast<size_t>(std::stoull(argOrThrow(ins, 0)));
         tape.current() = n < argRegs.size() ? argRegs[n] : Value();
     }
-    else if (ins.opcode == "CLEAR_ARGS") {
+    else if (ins.opcode == "CLEAR_ARGS" || ins.opcode == "CLEARARGS") {
         argRegs.clear();
     }
     else if (ins.opcode == "ARGCOUNT") {
