@@ -43,5 +43,6 @@ public:
 
     void loadFile();
     void buildIndex();
+    void appendSource(const std::string& source, const std::filesystem::path& baseDir);
     Function loadFunction(const std::string& name);
 };

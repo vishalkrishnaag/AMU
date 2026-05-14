@@ -35,9 +35,40 @@ static bool labelFromLine(const std::string& line, std::string& label) {
     return !label.empty();
 }
 
+static bool defFromLine(const std::string& line, std::string& label) {
+    auto tokens = Lexer::tokenize(line);
+    if (tokens.size() != 2 || toUpper(tokens[0]) != "DEF")
+        return false;
+
+    label = tokens[1];
+    return !label.empty() && label[0] != '$';
+}
+
+static bool functionStartFromLine(const std::string& line, std::string& label) {
+    if (defFromLine(line, label))
+        return true;
+    if (labelFromLine(line, label))
+        return !label.empty() && label[0] != '$';
+    return false;
+}
+
+static bool endFromLine(const std::string& line) {
+    auto tokens = Lexer::tokenize(line);
+    return tokens.size() == 1 && toUpper(tokens[0]) == "END";
+}
+
 static bool isIntenseSource(const std::filesystem::path& path) {
     auto ext = path.extension().string();
     return ext == ".intense" || ext == ".in10s";
+}
+
+static std::string unquoteImportTarget(const std::string& token) {
+    if (token.size() >= 2 &&
+        ((token.front() == '"' && token.back() == '"') ||
+         (token.front() == '\'' && token.back() == '\''))) {
+        return token.substr(1, token.size() - 2);
+    }
+    return token;
 }
 
 void FunctionLoader::loadFile() {
@@ -71,7 +102,7 @@ void FunctionLoader::loadFileFromPath(const std::filesystem::path& path) {
         if (!tokens.empty() && toUpper(tokens[0]) == "IMPORT") {
             if (tokens.size() < 2)
                 throw std::runtime_error("IMPORT missing target path in " + path.string());
-            importPath(tokens[1], path.parent_path());
+            importPath(unquoteImportTarget(tokens[1]), path.parent_path());
             continue;
         }
 
@@ -111,11 +142,37 @@ void FunctionLoader::importPath(const std::string& importTarget, const std::file
 }
 
 void FunctionLoader::buildIndex() {
+    labelIndex.clear();
     for (size_t i = 0; i < lines.size(); ++i) {
         std::string label;
-        if (labelFromLine(lines[i], label))
+        if (functionStartFromLine(lines[i], label))
             labelIndex[toUpper(trim(label))] = i;
     }
+}
+
+void FunctionLoader::appendSource(const std::string& source, const std::filesystem::path& baseDir) {
+    std::istringstream in(source);
+    std::string line;
+
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+
+        auto tokens = Lexer::tokenize(line);
+        if (!tokens.empty() && toUpper(tokens[0]) == "IMPORT") {
+            if (tokens.size() < 2)
+                throw std::runtime_error("IMPORT missing target path in REPL source");
+            importPath(unquoteImportTarget(tokens[1]), baseDir);
+            continue;
+        }
+
+        lines.push_back(line);
+    }
+
+    cache.clear();
+    lru.clear();
+    lruIters.clear();
+    buildIndex();
 }
 
 Function FunctionLoader::loadFunction(const std::string& name) {
@@ -137,6 +194,12 @@ Function FunctionLoader::loadFunction(const std::string& name) {
 
     for (size_t i = startLine; i < lines.size(); ++i) {
         std::string label;
+
+        if (endFromLine(lines[i]))
+            break;
+
+        if (defFromLine(lines[i], label))
+            break;
 
         if (labelFromLine(lines[i], label)) {
             if (label[0] == '$') {

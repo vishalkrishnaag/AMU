@@ -30,8 +30,8 @@
 #
 # Missing pieces exposed by this toy language:
 # - no native local variables or lexical scopes; everything needs tape conventions
-# - no comparison ops (< <= > >= !=), so loops mostly depend on truthiness/zero
-# - no list/map indexing or mutation by key; structured data is storage-only
+# - no high-level for/while syntax; loops lower to labels plus JMP/JMPIF/JMPNOT
+# - list/map indexing and mutation exist, but are explicit JSONGET/JSONSET steps
 # - no return-value convention except "current cell" discipline
 # - EXEC blocks cannot contain labels or JMP, so callbacks cannot express loops
 # - no module/package boundary for a reusable runtime except IMPORT + labels

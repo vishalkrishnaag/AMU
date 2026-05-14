@@ -1,0 +1,41 @@
+# Test: tape cells can behave as module functions.
+# Run: ./intense.out examples/test_tape_modules.in10s main 4
+
+def main
+TAPE 1
+TAPENAME file_tape
+SEEK 10
+SET (SET "module directory" ; PRINT)
+TAPEDEF get_current_file_directory
+
+TAPE 0
+CALL file_tape.get_current_file_directory
+
+# Update the function body by rewriting its tape cell.
+TAPE file_tape
+SEEK 10
+SET (SET "patched directory" ; PRINT)
+
+TAPE 0
+CALL file_tape.get_current_file_directory
+
+# Build another module by direct reserved-cell manipulation.
+TAPE 2
+SEEK -2
+SET "math_tape"
+SEEK 20
+SET (SET 40 ; ADD 2 ; PRINT)
+SEEK -1
+SET {}
+JSONSET "answer" 20
+
+TAPE 0
+CALL math_tape.answer
+
+# Store a function name in a normal cell and call through it.
+SEEK 0
+SET "file_tape.get_current_file_directory"
+CALL @0
+
+RET
+end

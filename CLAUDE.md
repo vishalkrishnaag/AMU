@@ -17,7 +17,7 @@ make                                              # compiles → intense.out
 ./intense.out --repl [file.intense|file.in10s] [tapes=4] [--debug]
 ```
 
-REPL mode executes one symbolic instruction at a time, prints the active tape after each step with the active head marked, supports `PRINT_TAPE n` for inspecting another tape, and asks on exit whether to save the entered instruction history as a `.in10s` file.
+REPL mode executes symbolic instructions, prints the active tape after each step with the active head marked, supports `PRINT_TAPE n` for inspecting another tape, and can load `IMPORT` lines plus function definitions into the live function loader before calling them. On exit it can save immediate statements under `main:` and loaded imports/functions as top-level `.in10s` source.
 
 ## Architecture — One Sentence Each
 
@@ -47,14 +47,15 @@ REPL mode executes one symbolic instruction at a time, prints the active tape af
 - **`argRegs`** vector in VM saved/restored across CALL/RET — callee inherits caller's args, nested calls are transparent
 - **`@N` cell references in arithmetic args** — `ADD @2` reads the operand from tape cell N of the active tape instead of treating it as a literal; resolved by `resolveOperand()` in VM.cpp, used by ADD/SUB/MUL/DIV/MOD
 - **Dynamic tape growth** — non-negative tape indexes grow the VM tape vector on demand; the startup tape count is only the initial capacity.
+- **Tape modules** — cell `-2` stores a tape name, cell `-1` stores a function directory map (`name -> cell`), and `CALL tapeName.fn` executes Code/source stored in that tape cell.
 
 ## Instruction Categories
 
-Tape nav: `MOVE`, `BACK`, `HOME`, `TAPE`, `SEEK n`, `PRINT_TAPE n`  
+Tape nav/modules: `MOVE`, `BACK`, `HOME`, `TAPE`, `SEEK n`, `PRINT_TAPE n`, `TAPENAME`/`NAMETAPE`, `TAPEDEF`/`TFUNC`, `TAPEUNDEF`, `TAPEFUNCS`  
 Inter-tape: `COPY`, `TAPEREAD`/`TGET`/`PEEK`, `TAPEWRITE`/`TPUT`/`POKE`, `TAPESWAP`/`TSWAP`, `TAPESEND`/`TSEND`/`SEND`, `TAPERECV`/`TRECV`/`RECV`  
 Cell ops: `SET`, `PRINT`, `PRINTJ`, `LEN`/`LENGTH`, `CMP`/`COMPARE`, `DELETE`, `CLEAR_TAPE`/`CLEARTAPE`, `JSONGET`, `JSONHAS`, `JSONKEYS`, `JSONPARSE`, `JSONLEN`, `JSONSET`, `JSONDEL`, `JSONPUSH`  
 Type sys: `TYPE`, `CAST`  
-Arithmetic: `ADD`, `SUB`, `MUL`, `DIV`, `MOD`, `ABS`, `NEG` — binary ops accept literal or `@N`; unary ops work on current cell  
+Arithmetic: `ADD`, `SUB`, `MUL`, `DIV`, `MOD`, `LT`, `GT`, `LTE`, `GTE`, `ABS`, `NEG` — binary ops accept literal or `@N`; unary ops work on current cell  
 Strings: `CONCAT`, `SPLIT`, `JOIN`, `SUBSTR`, `FIND`, `REPLACE`, `UPPER`, `LOWER`, `REVERSE`  
 File I/O: `READFILE`, `WRITEFILE`, `INPUT`  
 PostgreSQL: `DBCONNECT`, `DBSTATUS`, `DBEXEC`, `DBQUERY`, `DBSELECT`, `DBINSERT`, `DBUPDATE`, `DBDELETE`, `DBCLOSE`, `DB_TAPE_OPEN`, `DB_TAPE_INPUT`, `DB_TAPE_OUTPUT`, `DB_TAPE_SAVE`, `DB_TAPE_LOAD`, `DB_TAPE_EVENT` — loaded through `libpq` at runtime  
@@ -66,8 +67,21 @@ ML linalg: `DOTPROD`
 ML supervised: `LINEARREG`, `PREDICT`  
 ML clustering: `KMEANS`  
 NLP service: `NLPLOAD`, `NLPTOKENS`, `NLPANALYZE`, `NLPSIM`, `NLPDIFF`, `NLPPREDICT`, `NLPSENTIMENT`, `NLPGRAMMAR`, `NLPCONTEXT`, `NLPLOGIC`, `NLPFUZZY`, `NLPPROB`  
-Control: `CALL`, `ARG`, `RET`, `IMPORT`  
+Control: `CALL`, `ARG`, `RET`, `EXIT`, `IMPORT`  
 Arg passing: `SETARG`, `GETARG`, `CLEARARGS`, `ARGCOUNT`
+
+Tape module calls:
+```
+TAPE 1
+TAPENAME file_tape
+SEEK 10
+SET (SET "module directory" ; PRINT)
+TAPEDEF get_current_file_directory
+
+TAPE 0
+CALL file_tape.get_current_file_directory
+```
+Rewriting tape 1 cell 10 changes the next module call. Direct manipulation also works by storing the tape name in cell `-2` and the function directory map in cell `-1`. Module calls run with the module tape active, start at cell `0`, and restore that tape pointer on return.
 
 ## Calling Conventions
 
@@ -125,6 +139,7 @@ $done:
 | `example.intense` | Basic SET, PRINT, CALL, ARG, JSON cell |
 | `examples/test_types.intense` | TYPE + CAST for all 9 ValueKind variants |
 | `examples/test_arithmetic.intense` | ADD/SUB/MUL/DIV/MOD, int/float promotion |
+| `examples/test_comparisons.in10s` | LT/GT/LTE/GTE including zero and negative operands |
 | `examples/test_strings.intense` | CONCAT SPLIT FIND REPLACE SUBSTR UPPER LOWER |
 | `examples/test_join_json_utils.in10s` | JOIN JSONHAS JSONKEYS JSONDEL |
 | `examples/test_inter_tape_comm.in10s` | TAPEREAD TAPEWRITE TAPESWAP TAPESEND TAPERECV |
@@ -132,7 +147,12 @@ $done:
 | `examples/test_ml.intense` | All ML ops: stats, normalization, softmax, dotprod, linearreg, predict, kmeans |
 | `examples/test_homoiconic.intense` | EXEC EVAL QUOTE MATCH CODE* APPEND dynamic generation |
 | `examples/test_controlflow.intense` | JMP JMPIF JMPNOT $labels loops nested CALL in loop |
+| `examples/test_def_syntax.in10s` | def/end function definitions with local jump labels |
+| `examples/test_exit.in10s` | EXIT halts nested calls and Code blocks |
 | `examples/test_argpass.intense` | SETARG GETARG CLEARARGS ARGCOUNT nested call save/restore |
+| `examples/test_stdlib_loop.in10s` | stdlib tape_loop/loop callbacks over a passed tape |
+| `examples/test_tape_modules.in10s` | Tape names, tape-cell function directories, dotted CALL dispatch |
+| `examples/algorithms_data_structures_probe.in10s` | Tape-native linear search, bubble sort, iterative quicksort, stack, queue |
 
 All tests pass. Run each with `./intense.out examples/<file>.intense main`.
 

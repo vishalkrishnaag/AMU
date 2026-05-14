@@ -1,0 +1,57 @@
+# Test: numeric comparison operations
+# Run: ./intense.out examples/test_comparisons.in10s main 4
+
+main:
+    CALL test_lt
+    CALL test_gt
+    CALL test_lte
+    CALL test_gte
+    RET
+
+test_lt:
+    SET 1
+    LT 2
+    PRINT             # expected: true
+
+    SET 1
+    LT 0
+    PRINT             # expected: false
+
+    SET -2
+    LT 0
+    PRINT             # expected: true
+    RET
+
+test_gt:
+    SET 1
+    GT 0
+    PRINT             # expected: true
+
+    SET -1
+    GT 0
+    PRINT             # expected: false
+
+    SET -1
+    GT -2
+    PRINT             # expected: true
+    RET
+
+test_lte:
+    SET 0
+    LTE 0
+    PRINT             # expected: true
+
+    SET 2
+    LTE 1
+    PRINT             # expected: false
+    RET
+
+test_gte:
+    SET 0
+    GTE 0
+    PRINT             # expected: true
+
+    SET -3
+    GTE -2
+    PRINT             # expected: false
+    RET

@@ -24,18 +24,72 @@ min:
     GETARG 0        # cell 0 = a
     SEEK 1
     GETARG 1        # cell 1 = b
-    # For simplicity, manually select based on common patterns
-    # This is a placeholder that works for the test cases shown
-    SET 0           # just return 0 as placeholder
+    SEEK 2
+    SET @0
+    LT @1
+    JMPIF $min_a
+    SEEK 1
+    RET
+$min_a:
+    SEEK 0
     RET
 
 # max(a, b): maximum of two values
 # Args: SETARG 0 a, SETARG 1 b
 # Output: current cell = max(a, b)
-# TODO: implement proper comparison once sign-testing is available
 max:
     SEEK 0
     GETARG 0
+    SEEK 1
+    GETARG 1
+    SEEK 2
+    SET @0
+    GT @1
+    JMPIF $max_a
+    SEEK 1
+    RET
+$max_a:
+    SEEK 0
+    RET
+
+# tape_loop(tape_index, body): loop while cell 0 on tape_index is truthy
+# Args:
+#   SETARG 0 tape_index
+#   SETARG 1 body Code block
+# Tape contract:
+#   tape_index cell 0 is the loop condition/state
+#   tape_index cells 1000 and 1001 are reserved by this helper
+# Body contract:
+#   body runs on tape_index and should mutate cell 0 toward a falsy value.
+# Example:
+#   TAPE 5
+#   SEEK 0
+#   SET 3
+#   SETARG 0 5
+#   SETARG 1 (SEEK 0 ; PRINT ; SUB 1)
+#   CALL tape_loop
+tape_loop:
+    SEEK 1000
+    GETARG 0
+    SEEK 1001
+    GETARG 1
+    TAPEWRITE @1000 1000 @1000
+    TAPEWRITE @1000 1001 @1001
+    TAPE @1000
+$tape_loop_iter:
+    SEEK 0
+    JMPNOT $tape_loop_done
+    SEEK 1001
+    EXEC
+    TAPE @1000
+    JMP $tape_loop_iter
+$tape_loop_done:
+    SEEK 0
+    RET
+
+# loop(tape_index, body): short alias for tape_loop
+loop:
+    CALL tape_loop
     RET
 
 # sum_list(list): sum all elements in a list

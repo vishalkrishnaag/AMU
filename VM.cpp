@@ -24,11 +24,15 @@
 // ---------------------------------------------------------------------------
 namespace {
 
+constexpr long long TAPE_FUNCTIONS_CELL = -1;
+constexpr long long TAPE_NAME_CELL = -2;
+
 // ---- String utilities ------------------------------------------------------
 
 std::string stringifyValue(const Value& value);
 const std::string& argOrThrow(const Instruction& ins, size_t index);
 Value resolveOperand(const std::string& arg, Tape& tape);
+long long integerValue(const Value& value, const std::string& opcode, const std::string& role);
 
 bool isInteger(const std::string& token) {
     if (token.empty()) return false;
@@ -773,6 +777,11 @@ struct PgApi {
     void (*PQfreemem)(void*) = nullptr;
     void (*PQclear)(PGresult*) = nullptr;
 
+    ~PgApi() {
+        if (handle)
+            dlclose(handle);
+    }
+
     template <typename T>
     bool loadSymbol(T& target, const char* name, std::string& error) {
         target = reinterpret_cast<T>(dlsym(handle, name));
@@ -799,7 +808,7 @@ struct PgApi {
             return false;
         }
 
-        return loadSymbol(PQconnectdb, "PQconnectdb", error)
+        bool ok = loadSymbol(PQconnectdb, "PQconnectdb", error)
             && loadSymbol(PQstatus, "PQstatus", error)
             && loadSymbol(PQerrorMessage, "PQerrorMessage", error)
             && loadSymbol(PQfinish, "PQfinish", error)
@@ -816,6 +825,11 @@ struct PgApi {
             && loadSymbol(PQescapeIdentifier, "PQescapeIdentifier", error)
             && loadSymbol(PQfreemem, "PQfreemem", error)
             && loadSymbol(PQclear, "PQclear", error);
+        if (!ok) {
+            dlclose(handle);
+            handle = nullptr;
+        }
+        return ok;
     }
 };
 
@@ -1523,6 +1537,161 @@ int VM::ensureTapeIndex(long long index, const std::string& opcode) {
     return static_cast<int>(target);
 }
 
+void VM::syncTapeMetadata(int tapeIndex) {
+    if (tapeIndex < 0 || tapeIndex >= static_cast<int>(tapes.size()))
+        return;
+
+    Tape& tape = tapes[static_cast<size_t>(tapeIndex)];
+
+    auto nameIt = tape.cells.find(TAPE_NAME_CELL);
+    if (nameIt == tape.cells.end() || nameIt->second.kind() == ValueKind::Nil) {
+        tape.name.clear();
+    } else if (nameIt->second.kind() == ValueKind::Str) {
+        tape.name = std::get<std::string>(nameIt->second.data);
+    } else {
+        throw std::runtime_error("TAPEMODULE: tape name cell -2 must be a string");
+    }
+
+    auto cacheModuleName = [&](const std::string& moduleName) {
+        if (!moduleName.empty())
+            tapeNameCache[toUpperStr(moduleName)] = tapeIndex;
+    };
+
+    cacheModuleName("tape" + std::to_string(tapeIndex));
+    cacheModuleName(tape.name);
+
+    tape.functions.clear();
+    auto fnIt = tape.cells.find(TAPE_FUNCTIONS_CELL);
+    if (fnIt == tape.cells.end() || fnIt->second.kind() == ValueKind::Nil)
+        return;
+    if (fnIt->second.kind() != ValueKind::Map)
+        throw std::runtime_error("TAPEMODULE: tape function directory cell -1 must be a map");
+
+    const auto& functionMap = std::get<Map>(fnIt->second.data);
+    for (const auto& [name, cellValue] : functionMap) {
+        long long cell = integerValue(cellValue, "TAPEMODULE", "function cell index");
+        std::string fnKey = toUpperStr(name);
+        tape.functions[fnKey] = cell;
+
+        tapeFunctionCache[toUpperStr("tape" + std::to_string(tapeIndex) + "." + name)] = {tapeIndex, cell};
+        if (!tape.name.empty())
+            tapeFunctionCache[toUpperStr(tape.name + "." + name)] = {tapeIndex, cell};
+    }
+}
+
+void VM::syncAllTapeMetadata() {
+    tapeNameCache.clear();
+    tapeFunctionCache.clear();
+    for (size_t i = 0; i < tapes.size(); ++i)
+        syncTapeMetadata(static_cast<int>(i));
+}
+
+int VM::resolveTapeSelector(const std::string& selector, const std::string& opcode) {
+    std::string value = trimStr(selector);
+    if (value.empty())
+        throw std::runtime_error(opcode + ": empty tape selector");
+
+    if (isInteger(value))
+        return ensureTapeIndex(parseLongLongStrict(value, opcode, "tape index"), opcode);
+
+    std::string upper = toUpperStr(value);
+    if (upper.rfind("TAPE", 0) == 0 && value.size() > 4) {
+        std::string suffix = value.substr(4);
+        if (isInteger(suffix))
+            return ensureTapeIndex(parseLongLongStrict(suffix, opcode, "tape index"), opcode);
+    }
+
+    syncAllTapeMetadata();
+    auto it = tapeNameCache.find(upper);
+    if (it != tapeNameCache.end())
+        return ensureTapeIndex(it->second, opcode);
+
+    throw std::runtime_error(opcode + ": unknown tape selector: " + selector);
+}
+
+bool VM::resolveTapeFunction(const std::string& target, int& tapeIndex, long long& cellIndex) {
+    if (target.empty())
+        return false;
+
+    syncAllTapeMetadata();
+
+    size_t dot = target.find('.');
+    if (dot != std::string::npos) {
+        std::string moduleName = target.substr(0, dot);
+        std::string functionName = target.substr(dot + 1);
+        if (moduleName.empty() || functionName.empty())
+            return false;
+
+        std::string cacheKey = toUpperStr(target);
+        auto cacheIt = tapeFunctionCache.find(cacheKey);
+        if (cacheIt != tapeFunctionCache.end()) {
+            tapeIndex = cacheIt->second.first;
+            cellIndex = cacheIt->second.second;
+            return true;
+        }
+
+        tapeIndex = resolveTapeSelector(moduleName, "CALL");
+        if (isInteger(functionName)) {
+            cellIndex = parseLongLongStrict(functionName, "CALL", "tape function cell");
+            return true;
+        }
+
+        auto fnIt = tapes[static_cast<size_t>(tapeIndex)].functions.find(toUpperStr(functionName));
+        if (fnIt == tapes[static_cast<size_t>(tapeIndex)].functions.end())
+            return false;
+        cellIndex = fnIt->second;
+        tapeFunctionCache[cacheKey] = {tapeIndex, cellIndex};
+        return true;
+    }
+
+    auto fnIt = tapes[static_cast<size_t>(activeTape)].functions.find(toUpperStr(target));
+    if (fnIt != tapes[static_cast<size_t>(activeTape)].functions.end()) {
+        tapeIndex = activeTape;
+        cellIndex = fnIt->second;
+        return true;
+    }
+
+    return false;
+}
+
+bool VM::callTapeFunction(int tapeIndex, long long cellIndex, const std::string& displayName) {
+    ensureTapeIndex(tapeIndex, "CALL");
+    auto& moduleTape = tapes[static_cast<size_t>(tapeIndex)];
+    auto it = moduleTape.cells.find(cellIndex);
+    if (it == moduleTape.cells.end() || it->second.kind() == ValueKind::Nil)
+        throw std::runtime_error("CALL: tape function not found in " + displayName +
+                                 " at cell " + std::to_string(cellIndex));
+
+    Value functionValue = it->second;
+    int previousTape = activeTape;
+    long long previousModulePtr = tapes[static_cast<size_t>(tapeIndex)].ptr;
+    tapes[static_cast<size_t>(tapeIndex)].ptr = 0;
+    activeTape = tapeIndex;
+
+    auto restoreCallContext = [&]() {
+        activeTape = previousTape;
+        if (tapeIndex >= 0 && tapeIndex < static_cast<int>(tapes.size()))
+            tapes[static_cast<size_t>(tapeIndex)].ptr = previousModulePtr;
+    };
+
+    try {
+        if (functionValue.kind() == ValueKind::Code) {
+            runBlock(std::get<Code>(functionValue.data));
+        } else if (functionValue.kind() == ValueKind::Str) {
+            runBlock(parseCodeSource(std::get<std::string>(functionValue.data)));
+        } else {
+            throw std::runtime_error("CALL: tape function " + displayName +
+                                     " must be code or string, got " +
+                                         std::string(kindName(functionValue.kind())));
+        }
+    } catch (...) {
+        restoreCallContext();
+        throw;
+    }
+    restoreCallContext();
+    return true;
+}
+
 void VM::debug(const Instruction& ins) {
     if (!debugMode) return;
 
@@ -1579,6 +1748,7 @@ std::string VM::tapeSnapshot(int radius, int tapeIndex) const {
 
     out << (shownTape == activeTape ? colorHead("=> ") : "   ")
         << "tape" << shownTape
+        << (tape.name.empty() ? "" : " name=" + tape.name)
         << " ptr=" << colorHead(std::to_string(tape.ptr))
         << " cells=" << tape.length();
 
@@ -1674,6 +1844,9 @@ long long VM::tapePointer(int tapeIndex) const {
 // ---------------------------------------------------------------------------
 
 void VM::execute(const Instruction& ins) {
+    if (halted)
+        return;
+
     debug(ins);
 
     auto& tape = tapes[activeTape];
@@ -1703,6 +1876,9 @@ void VM::execute(const Instruction& ins) {
     }
     else if (ins.opcode == "PRINTJ") {
         std::cout << stringifyJsonValue(tape.current()) << "\n";
+    }
+    else if (ins.opcode == "EXIT") {
+        halted = true;
     }
 
     // ---- Type system ------------------------------------------------------
@@ -1766,61 +1942,112 @@ void VM::execute(const Instruction& ins) {
     }
 
     else if (ins.opcode == "TAPE") {
-        int target = ensureTapeIndex(integerOperand(argOrThrow(ins, 0), tape, ins.opcode, "tape index"), ins.opcode);
+        int target = resolveTapeSelector(stringOperand(argOrThrow(ins, 0), tape), ins.opcode);
         activeTape = target;
     }
     else if (ins.opcode == "PRINT_TAPE") {
-        int target = ensureTapeIndex(integerOperand(argOrThrow(ins, 0), tape, ins.opcode, "tape index"), ins.opcode);
+        int target = resolveTapeSelector(stringOperand(argOrThrow(ins, 0), tape), ins.opcode);
         std::cout << tapeSnapshot(3, target);
+    }
+    else if (ins.opcode == "TAPENAME" || ins.opcode == "NAMETAPE") {
+        int target = activeTape;
+        std::string name;
+        if (ins.args.size() == 1) {
+            name = stringOperand(argOrThrow(ins, 0), tape);
+        } else if (ins.args.size() >= 2) {
+            target = resolveTapeSelector(stringOperand(argOrThrow(ins, 0), tape), ins.opcode);
+            name = stringOperand(argOrThrow(ins, 1), tape);
+        } else {
+            throw std::runtime_error(ins.opcode + ": expected name, or tape name");
+        }
+        tapes[static_cast<size_t>(target)].name = name;
+        tapes[static_cast<size_t>(target)].cells[TAPE_NAME_CELL] = Value(name);
+        syncAllTapeMetadata();
+    }
+    else if (ins.opcode == "TAPEDEF" || ins.opcode == "TFUNC") {
+        std::string name = stringOperand(argOrThrow(ins, 0), tape);
+        long long cellIndex = ins.args.size() > 1
+            ? integerOperand(argOrThrow(ins, 1), tape, ins.opcode, "function cell index")
+            : tape.ptr;
+
+        Value& directory = tapes[activeTape].cells[TAPE_FUNCTIONS_CELL];
+        if (directory.kind() == ValueKind::Nil)
+            directory = Value(Map{});
+        if (directory.kind() != ValueKind::Map)
+            throw std::runtime_error(ins.opcode + ": tape function directory cell -1 must be a map or nil");
+        std::get<Map>(directory.data)[name] = Value(cellIndex);
+        tapes[activeTape].functions[toUpperStr(name)] = cellIndex;
+        syncAllTapeMetadata();
+    }
+    else if (ins.opcode == "TAPEUNDEF") {
+        std::string name = stringOperand(argOrThrow(ins, 0), tape);
+        auto& directory = tapes[activeTape].cells[TAPE_FUNCTIONS_CELL];
+        if (directory.kind() == ValueKind::Map)
+            std::get<Map>(directory.data).erase(name);
+        tapes[activeTape].functions.erase(toUpperStr(name));
+        syncAllTapeMetadata();
+    }
+    else if (ins.opcode == "TAPEFUNCS") {
+        int target = ins.args.empty()
+            ? activeTape
+            : resolveTapeSelector(stringOperand(argOrThrow(ins, 0), tape), ins.opcode);
+        syncAllTapeMetadata();
+        List names;
+        std::vector<std::string> sorted;
+        auto dirIt = tapes[static_cast<size_t>(target)].cells.find(TAPE_FUNCTIONS_CELL);
+        if (dirIt != tapes[static_cast<size_t>(target)].cells.end() &&
+            dirIt->second.kind() == ValueKind::Map) {
+            for (const auto& [name, _] : std::get<Map>(dirIt->second.data))
+                sorted.push_back(name);
+        }
+        std::sort(sorted.begin(), sorted.end());
+        for (const auto& name : sorted)
+            names.emplace_back(name);
+        tape.current() = Value(std::move(names));
     }
     else if (ins.opcode == "LEN" || ins.opcode == "LENGTH") {
         tape.current() = Value(static_cast<long long>(tape.length()));
     }
     else if (ins.opcode == "CMP" || ins.opcode == "COMPARE") {
-        int other = ensureTapeIndex(integerOperand(argOrThrow(ins, 0), tape, ins.opcode, "tape index"), ins.opcode);
+        int other = resolveTapeSelector(stringOperand(argOrThrow(ins, 0), tape), ins.opcode);
         tapes[activeTape].current() = Value(valuesEqual(tapes[activeTape].current(), tapes[other].current()));
     }
     else if (ins.opcode == "COPY") {
         // Copy current cell to the same ptr position on dest tape
-        long long destRaw = integerOperand(argOrThrow(ins, 0), tape, ins.opcode, "destination tape index");
         Value value = tape.current();
-        int dest = ensureTapeIndex(destRaw, ins.opcode);
+        int dest = resolveTapeSelector(stringOperand(argOrThrow(ins, 0), tape), ins.opcode);
         tapes[dest].cells[tapes[dest].ptr] = value;
     }
     else if (ins.opcode == "TAPEREAD" || ins.opcode == "TGET" || ins.opcode == "PEEK") {
-        long long srcRaw = integerOperand(argOrThrow(ins, 0), tape, ins.opcode, "tape index");
         bool hasCell = ins.args.size() > 1;
         long long srcCell = hasCell ? integerOperand(argOrThrow(ins, 1), tape, ins.opcode, "cell index") : 0;
-        int src = ensureTapeIndex(srcRaw, ins.opcode);
+        int src = resolveTapeSelector(stringOperand(argOrThrow(ins, 0), tape), ins.opcode);
         if (!hasCell)
             srcCell = tapes[src].ptr;
         tapes[activeTape].current() = tapes[src].cells[srcCell];
     }
     else if (ins.opcode == "TAPEWRITE" || ins.opcode == "TPUT" || ins.opcode == "POKE") {
         Value value = ins.args.size() > 2 ? resolveOperand(argOrThrow(ins, 2), tape) : tape.current();
-        long long destRaw = integerOperand(argOrThrow(ins, 0), tape, ins.opcode, "tape index");
         bool hasCell = ins.args.size() > 1;
         long long destCell = hasCell ? integerOperand(argOrThrow(ins, 1), tape, ins.opcode, "cell index") : 0;
-        int dest = ensureTapeIndex(destRaw, ins.opcode);
+        int dest = resolveTapeSelector(stringOperand(argOrThrow(ins, 0), tape), ins.opcode);
         if (!hasCell)
             destCell = tapes[dest].ptr;
         tapes[dest].cells[destCell] = value;
     }
     else if (ins.opcode == "TAPESWAP" || ins.opcode == "TSWAP") {
-        long long otherRaw = integerOperand(argOrThrow(ins, 0), tape, ins.opcode, "tape index");
         bool hasCell = ins.args.size() > 1;
         long long otherCell = hasCell ? integerOperand(argOrThrow(ins, 1), tape, ins.opcode, "cell index") : 0;
-        int other = ensureTapeIndex(otherRaw, ins.opcode);
+        int other = resolveTapeSelector(stringOperand(argOrThrow(ins, 0), tape), ins.opcode);
         if (!hasCell)
             otherCell = tapes[other].ptr;
         std::swap(tapes[activeTape].current(), tapes[other].cells[otherCell]);
     }
     else if (ins.opcode == "TAPESEND" || ins.opcode == "TSEND" || ins.opcode == "SEND") {
         Value value = ins.args.size() > 2 ? resolveOperand(argOrThrow(ins, 2), tape) : tape.current();
-        long long destRaw = integerOperand(argOrThrow(ins, 0), tape, ins.opcode, "tape index");
         bool hasChannel = ins.args.size() > 1;
         long long channel = hasChannel ? integerOperand(argOrThrow(ins, 1), tape, ins.opcode, "cell index") : 0;
-        int dest = ensureTapeIndex(destRaw, ins.opcode);
+        int dest = resolveTapeSelector(stringOperand(argOrThrow(ins, 0), tape), ins.opcode);
         if (!hasChannel)
             channel = tapes[dest].ptr;
         Value& inbox = tapes[dest].cells[channel];
@@ -1831,10 +2058,9 @@ void VM::execute(const Instruction& ins) {
         std::get<List>(inbox.data).push_back(value);
     }
     else if (ins.opcode == "TAPERECV" || ins.opcode == "TRECV" || ins.opcode == "RECV") {
-        long long srcRaw = integerOperand(argOrThrow(ins, 0), tape, ins.opcode, "tape index");
         bool hasChannel = ins.args.size() > 1;
         long long channel = hasChannel ? integerOperand(argOrThrow(ins, 1), tape, ins.opcode, "cell index") : 0;
-        int src = ensureTapeIndex(srcRaw, ins.opcode);
+        int src = resolveTapeSelector(stringOperand(argOrThrow(ins, 0), tape), ins.opcode);
         if (!hasChannel)
             channel = tapes[src].ptr;
         Value& inbox = tapes[src].cells[channel];
@@ -1855,10 +2081,15 @@ void VM::execute(const Instruction& ins) {
     }
     else if (ins.opcode == "CLEAR_TAPE" || ins.opcode == "CLEARTAPE") {
         tape.cells.clear();
+        tape.name.clear();
+        tape.functions.clear();
         tape.ptr = 0;
+        syncAllTapeMetadata();
     }
     else if (ins.opcode == "DELETE") {
         tape.cells.erase(tape.ptr);
+        if (tape.ptr == TAPE_NAME_CELL || tape.ptr == TAPE_FUNCTIONS_CELL)
+            syncAllTapeMetadata();
     }
 
     // ---- Arithmetic -------------------------------------------------------
@@ -1898,55 +2129,19 @@ void VM::execute(const Instruction& ins) {
     }
     else if (ins.opcode == "LT") {
         Value operand = resolveOperand(argOrThrow(ins, 0), tape);
-        long long less_than_value= static_cast<long long>(numericValue(operand));
-        if (less_than_value == 0)
-        {
-          tape.current() = Value(false);   
-        }
-        else{
-        long long lhs = static_cast<long long>(numericValue(tape.current()));
-        tape.current() = Value(lhs < less_than_value);
-        }
-
+        tape.current() = Value(numericValue(tape.current()) < numericValue(operand));
     }
-        else if (ins.opcode == "GT") {
+    else if (ins.opcode == "GT") {
         Value operand = resolveOperand(argOrThrow(ins, 0), tape);
-        long long less_than_value= static_cast<long long>(numericValue(operand));
-        if (less_than_value == 0)
-        {
-          tape.current() = Value(false);   
-        }
-        else{
-        long long lhs = static_cast<long long>(numericValue(tape.current()));
-        tape.current() = Value(lhs > less_than_value);
-        }
-
+        tape.current() = Value(numericValue(tape.current()) > numericValue(operand));
     }
-        else if (ins.opcode == "LTE") {
+    else if (ins.opcode == "LTE") {
         Value operand = resolveOperand(argOrThrow(ins, 0), tape);
-        long long less_than_value= static_cast<long long>(numericValue(operand));
-        if (less_than_value == 0)
-        {
-          tape.current() = Value(false);   
-        }
-        else{
-        long long lhs = static_cast<long long>(numericValue(tape.current()));
-        tape.current() = Value(lhs <= less_than_value);
-        }
-
+        tape.current() = Value(numericValue(tape.current()) <= numericValue(operand));
     }
     else if (ins.opcode == "GTE") {
         Value operand = resolveOperand(argOrThrow(ins, 0), tape);
-        long long less_than_value= static_cast<long long>(numericValue(operand));
-        if (less_than_value == 0)
-        {
-          tape.current() = Value(false);   
-        }
-        else{
-        long long lhs = static_cast<long long>(numericValue(tape.current()));
-        tape.current() = Value(lhs >= less_than_value);
-        }
-
+        tape.current() = Value(numericValue(tape.current()) >= numericValue(operand));
     }
     else if (ins.opcode == "ABS") {
         double val = numericValue(tape.current());
@@ -2444,32 +2639,31 @@ void VM::execute(const Instruction& ins) {
 
     else if (ins.opcode == "MATCH") {
         Value pattern = resolveOperand(argOrThrow(ins, 0), tape);
-        Value original = tape.current();
-        tape.current() = Value(matchPattern(original, pattern));
+        bool matched = matchPattern(tape.current(), pattern);
+        tape.current() = Value(matched);
     }
 
     else if (ins.opcode == "JSONGET" || ins.opcode == "LIST_GET" || ins.opcode == "MAP_GET") {
         std::string key = stringifyValue(resolveOperand(argOrThrow(ins, 0), tape));
-        Value original = tape.current();
+        const Value& original = tape.current();
+        Value result;
 
         if (original.kind() == ValueKind::Map) {
             const auto& map = std::get<Map>(original.data);
             auto it = map.find(key);
-            tape.current() = it == map.end() ? Value() : it->second;
+            if (it != map.end())
+                result = it->second;
         } else if (original.kind() == ValueKind::List && isInteger(key)) {
             long long idx = parseLongLongStrict(key, ins.opcode, "list index");
             const auto& list = std::get<List>(original.data);
-            if (idx < 0 || idx >= static_cast<long long>(list.size()))
-                tape.current() = Value();
-            else
-                tape.current() = list[static_cast<size_t>(idx)];
-        } else {
-            tape.current() = Value();
+            if (idx >= 0 && idx < static_cast<long long>(list.size()))
+                result = list[static_cast<size_t>(idx)];
         }
+        tape.current() = std::move(result);
     }
     else if (ins.opcode == "JSONHAS") {
         std::string key = stringifyValue(resolveOperand(argOrThrow(ins, 0), tape));
-        Value original = tape.current();
+        const Value& original = tape.current();
         bool found = false;
 
         if (original.kind() == ValueKind::Map) {
@@ -2819,15 +3013,33 @@ void VM::execute(const Instruction& ins) {
         }
     }
     else if (ins.opcode == "CALL") {
+        Value target = resolveOperand(argOrThrow(ins, 0), tape);
         Frame frame;
-        frame.functionName = argOrThrow(ins, 0);
+        frame.functionName = target.kind() == ValueKind::Str
+            ? std::get<std::string>(target.data)
+            : stringifyValue(target);
         for (size_t i = 1; i < ins.args.size(); ++i)
             frame.args.push_back(resolveOperand(ins.args[i], tape));
         // Save arg registers; callee inherits them (reads via GETARG),
         // may overwrite for sub-calls. Restored to caller's snapshot on RET.
         frame.savedArgRegs = argRegs;
         callStack.push(frame);
-        run(frame.functionName);
+        try {
+            if (target.kind() == ValueKind::Code) {
+                runBlock(std::get<Code>(target.data));
+            } else {
+                int moduleTape = 0;
+                long long functionCell = 0;
+                if (resolveTapeFunction(frame.functionName, moduleTape, functionCell))
+                    callTapeFunction(moduleTape, functionCell, frame.functionName);
+                else
+                    run(frame.functionName);
+            }
+        } catch (...) {
+            argRegs = callStack.top().savedArgRegs;
+            callStack.pop();
+            throw;
+        }
         argRegs = callStack.top().savedArgRegs;
         callStack.pop();
     }
@@ -2854,9 +3066,14 @@ void VM::execute(const Instruction& ins) {
 
 void VM::runBlock(const Code& code) {
     for (const auto& ins : code) {
+        if (halted) return;
         if (ins.opcode == "RET") return;
         execute(ins);
     }
+}
+
+void VM::loadSource(const std::string& source, const std::filesystem::path& baseDir) {
+    loader.appendSource(source, baseDir);
 }
 
 // ---------------------------------------------------------------------------
@@ -2864,10 +3081,13 @@ void VM::runBlock(const Code& code) {
 // ---------------------------------------------------------------------------
 
 void VM::run(const std::string& entry) {
+    if (halted)
+        return;
+
     Function fn = loader.loadFunction(entry);
     size_t pc = 0;
 
-    while (pc < fn.instructions.size()) {
+    while (!halted && pc < fn.instructions.size()) {
         const auto& ins = fn.instructions[pc];
 
         if (ins.opcode == "RET") return;

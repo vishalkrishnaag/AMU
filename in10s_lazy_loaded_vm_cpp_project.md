@@ -73,11 +73,21 @@ The VM uses a strict `ValueKind` enum — no implicit type guessing:
 ### 6 — Tapes are sparse integer→Value maps
 Each tape is an `unordered_map<long long, Value>`. The tape pointer starts at 0. Unwritten cells return `nil`.
 
+Tapes can also act as lightweight modules. Cell `-2` stores an optional tape
+name, and cell `-1` stores a function directory map where each key is a function
+name and each value is the tape cell containing a `Code` value or source string.
+
 ### 7 — Functions, CALL, and RET
 ```
 CALL function_name [arg0] [arg1] ...
+CALL tape1.function_name
+CALL file_tape.function_name
+CALL @0
 ```
-Arguments are parsed as Values. Access them inside the function with `ARG <index>`. `RET` returns to the caller.
+Arguments are parsed as Values. `CALL name` still runs a source-loaded
+function. Dotted calls resolve against tape module names (`tape1.fn`,
+`file_tape.fn`). `CALL @0` can dispatch from a cell containing a function name
+or a `Code` value. `RET` returns to the caller.
 
 ### 8 — Imports
 ```
@@ -98,8 +108,13 @@ Resolved relative to the importing file. Circular imports are detected and skipp
 | `BACK n`    | Move tape pointer backward by `n` cells |
 | `SEEK n`    | Set the active tape pointer to cell `n` |
 | `HOME`      | Reset the active tape pointer to cell 0 |
-| `TAPE n`    | Switch active tape to non-negative index `n`; tapes grow on demand |
-| `PRINT_TAPE n` | Print tape `n` without switching the active tape; tapes grow on demand |
+| `TAPE n/name` | Switch active tape to non-negative index, `tapeN`, or a named tape; tapes grow on demand |
+| `PRINT_TAPE n/name` | Print tape without switching the active tape; accepts index or named tape |
+| `TAPENAME name` / `NAMETAPE name` | Name the active tape and store that name in reserved cell `-2` |
+| `TAPENAME tape name` | Name a specific tape by index or existing tape name |
+| `TAPEDEF name [cell]` / `TFUNC` | Add/update a function entry in reserved cell `-1`; default cell is the current pointer |
+| `TAPEUNDEF name` | Remove a function entry from the active tape module |
+| `TAPEFUNCS [tape]` | Store the selected tape's function names as a List in the current cell |
 
 ### Inter-Tape Communication
 
@@ -169,6 +184,10 @@ The operand argument accepts two forms:
 | `MUL value`   | current ← current × value |
 | `DIV value`   | current ← current ÷ value (throws on zero) |
 | `MOD value`   | current ← current mod value (integer only) |
+| `LT value`    | current ← current < value |
+| `GT value`    | current ← current > value |
+| `LTE value`   | current ← current <= value |
+| `GTE value`   | current ← current >= value |
 
 **Cell reference syntax:** prefix the argument with `@` followed by an integer cell index.
 The index refers to the **active tape** (use `TAPE n` first for cross-tape reads).
@@ -298,13 +317,72 @@ If execution throws and a catch cell is provided, the current cell is replaced w
 | `TRY [catchCell]`  | Execute current Code cell; on error, optionally execute Code stored at `catchCell` |
 | `RAISE [message]`  | Throw an assembly-level error using `message`, or the current cell if omitted |
 
-### Function Calls
+### Function Definitions and Calls
+
+Preferred function syntax:
+
+```intense
+def greet
+SET "hello"
+PRINT
+RET
+end
+
+def main
+CALL greet
+RET
+end
+```
+
+The legacy `label:` form remains accepted for existing source files.
+
+Tape module functions:
+
+```intense
+def main
+TAPE 1
+TAPENAME file_tape
+SEEK 10
+SET (SET "module directory" ; PRINT)
+TAPEDEF get_current_file_directory
+
+TAPE 0
+CALL file_tape.get_current_file_directory
+RET
+end
+```
+
+The function body lives in tape cell `10`; rewriting that cell changes the next
+call. You can also edit cell `-1` directly as a map such as
+`{"get_current_file_directory":10}`. Tape module calls execute with that module
+tape active, start at cell `0`, and restore the module pointer when the call
+returns so the function cell and directory cell are not overwritten by accident.
+
+Reusable stdlib tape loop helper:
+
+```intense
+IMPORT stdlib.intense
+
+def main
+TAPE 5
+SEEK 0
+SET 3
+SETARG 0 5
+SETARG 1 (SEEK 0 ; PRINT ; SUB 1)
+CALL tape_loop
+RET
+end
+```
+
+`tape_loop` uses cell `0` on the passed tape as the condition/state. The body
+runs on that tape and should mutate cell `0` toward a falsy value.
 
 | Instruction          | Description |
 |----------------------|-------------|
-| `CALL name [args…]`  | Push frame, run `name`, pop frame |
+| `CALL name [args…]`  | Push frame, run a source function, tape module function, function name cell, or Code value |
 | `ARG index`          | Load call argument at `index` into current cell |
 | `RET`                | Return from current function |
+| `EXIT`               | Halt the entire running program or REPL session |
 
 ---
 

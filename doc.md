@@ -135,10 +135,13 @@ Core instructions:
 - MOVE n
 - BACK n
 - TAPE n
+- TAPENAME name
+- TAPEDEF name [cell]
 - SET value
 - COPY
 - COMPARE
 - CALL label
+- CALL tapeName.functionName
 - RET
 - EXEC
 - EVAL
@@ -149,6 +152,10 @@ Core instructions:
 - LENGTH
 
 Instructions themselves may be stored inside tape cells.
+Tape modules use cell -2 for the tape name and cell -1 for a map of
+function names to code/source cells, so changing those cells changes how
+module calls resolve. A module call runs with that tape active, starts at cell
+0, and restores the module pointer after return.
 
 Example:
 Cell may contain:
@@ -212,7 +219,12 @@ Requirements:
 - use LRU eviction
 - avoid huge memory usage
 
-Function labels:
+Preferred function labels:
+def label
+    ...
+end
+
+Legacy labels are still accepted:
 label:
 
 Store:
@@ -228,14 +240,21 @@ NO semicolons required.
 
 One instruction per line.
 
-Labels use:
+Preferred functions use:
+def label
+    ...
+end
+
+Legacy labels use:
 label:
 
 Example:
-main:
+def main
     SET "hello"
     PRINT
     CALL analyze
+    RET
+end
 
 Execution Architecture
 ----------------------
@@ -458,6 +477,18 @@ which may themselves:
 * generate other algorithms
 * move between tapes
 * rewrite themselves
+
+Now a tape can be named and called like a module:
+
+```intense
+TAPE 1
+TAPENAME file_tape
+SEEK 10
+SET (SET "current directory" ; PRINT)
+TAPEDEF get_current_file_directory
+TAPE 0
+CALL file_tape.get_current_file_directory
+```
 
 ---
 

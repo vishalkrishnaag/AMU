@@ -3,6 +3,7 @@
 #include "Lexer.hpp"
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -418,6 +419,69 @@ static bool isLabelOnlyLine(const std::string& line) {
     return tokens.size() == 1 && !tokens[0].empty() && tokens[0].back() == ':';
 }
 
+static bool isGlobalLabelOnlyLine(const std::string& line, std::string* labelOut = nullptr) {
+    auto tokens = Lexer::tokenize(line);
+    if (tokens.size() != 1 || tokens[0].empty() || tokens[0].back() != ':')
+        return false;
+
+    std::string label = tokens[0].substr(0, tokens[0].size() - 1);
+    if (label.empty() || label[0] == '$')
+        return false;
+
+    if (labelOut)
+        *labelOut = label;
+    return true;
+}
+
+static bool isDefLine(const std::string& line, std::string* labelOut = nullptr) {
+    auto tokens = Lexer::tokenize(line);
+    if (tokens.size() != 2)
+        return false;
+
+    std::string opcode = tokens[0];
+    std::transform(opcode.begin(), opcode.end(), opcode.begin(),
+                   [](unsigned char c) { return std::toupper(c); });
+    if (opcode != "DEF" || tokens[1].empty() || tokens[1][0] == '$')
+        return false;
+
+    if (labelOut)
+        *labelOut = tokens[1];
+    return true;
+}
+
+static bool isEndLine(const std::string& line) {
+    auto tokens = Lexer::tokenize(line);
+    if (tokens.size() != 1)
+        return false;
+
+    std::string opcode = tokens[0];
+    std::transform(opcode.begin(), opcode.end(), opcode.begin(),
+                   [](unsigned char c) { return std::toupper(c); });
+    return opcode == "END";
+}
+
+static bool isImportLine(const std::string& line) {
+    auto tokens = Lexer::tokenize(line);
+    if (tokens.empty())
+        return false;
+
+    std::string opcode = tokens[0];
+    std::transform(opcode.begin(), opcode.end(), opcode.begin(),
+                   [](unsigned char c) { return std::toupper(c); });
+    return opcode == "IMPORT";
+}
+
+static bool sourceLoadsIntoProgram(const std::string& source) {
+    for (const auto& rawStatement : splitReplStatements(source)) {
+        std::string statement = trim(rawStatement);
+        if (statement.empty())
+            continue;
+        if (isImportLine(statement) || isDefLine(statement) || isGlobalLabelOnlyLine(statement))
+            return true;
+    }
+    return false;
+}
+
 static std::string flattenStatementForHistory(std::string statement) {
     for (char& c : statement) {
         if (c == '\n' || c == '\r' || c == '\t')
@@ -426,28 +490,99 @@ static std::string flattenStatementForHistory(std::string statement) {
     return trim(statement);
 }
 
+static void recordSourceLines(
+    const std::string& source,
+    std::vector<std::string>& commandHistory,
+    std::vector<std::string>& sessionSource
+) {
+    std::istringstream in(source);
+    std::string line;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+        if (trim(line).empty()) {
+            sessionSource.push_back("");
+            continue;
+        }
+        sessionSource.push_back(line);
+        commandHistory.push_back(flattenStatementForHistory(line));
+    }
+}
+
+static bool collectDefinitionSource(
+    const std::string& firstLine,
+    std::vector<std::string>& commandHistory,
+    std::string& source
+) {
+    std::string label;
+    bool newStyle = isDefLine(firstLine, &label);
+    if (!newStyle)
+        isGlobalLabelOnlyLine(firstLine, &label);
+
+    std::cout << "Defining " << label << ". Finish with "
+              << (newStyle ? "end" : ":end or a blank line")
+              << "; use :cancel to abort.\n";
+    source = firstLine;
+    source += "\n";
+
+    std::string entry;
+    while (readReplEntry("def...> ", entry, commandHistory)) {
+        std::string stripped = trim(entry);
+        if (newStyle && isEndLine(stripped)) {
+            source += entry;
+            source += "\n";
+            return true;
+        }
+        if (!newStyle && (stripped.empty() || stripped == ":end"))
+            return true;
+        if (stripped == ":cancel") {
+            std::cout << "Definition canceled.\n";
+            source.clear();
+            return false;
+        }
+        source += entry;
+        source += "\n";
+    }
+
+    return true;
+}
+
 static bool executeReplSource(
     VM& vm,
     const std::string& source,
-    std::vector<std::string>& history,
+    std::vector<std::string>& commandHistory,
+    std::vector<std::string>& sessionMain,
+    std::vector<std::string>& sessionSource,
+    const std::filesystem::path& replBaseDir,
     bool& lastWasPrintTape
 ) {
     bool executedAny = false;
     lastWasPrintTape = false;
+
+    if (sourceLoadsIntoProgram(source)) {
+        vm.loadSource(source, replBaseDir);
+        recordSourceLines(source, commandHistory, sessionSource);
+        std::cout << "Loaded source into REPL program.\n";
+        return false;
+    }
 
     for (const auto& rawStatement : splitReplStatements(source)) {
         std::string statement = trim(rawStatement);
         if (statement.empty() || isLabelOnlyLine(statement))
             continue;
 
-        Instruction ins = Parser::parse(statement, static_cast<int>(history.size() + 1));
+        Instruction ins = Parser::parse(statement, static_cast<int>(commandHistory.size() + 1));
         if (ins.opcode.empty())
             continue;
 
         vm.execute(ins);
-        history.push_back(flattenStatementForHistory(statement));
+        std::string flattened = flattenStatementForHistory(statement);
+        commandHistory.push_back(flattened);
+        sessionMain.push_back(flattened);
         executedAny = true;
         lastWasPrintTape = ins.opcode == "PRINT_TAPE";
+        if (vm.isHalted())
+            break;
     }
 
     return executedAny;
@@ -536,26 +671,37 @@ static void printReplHelp() {
         << "  :cell [idx] [tape]    show a full cell value\n"
         << "  :debug on|off         toggle debug lines\n"
         << "  :step on|off          pause before each instruction when debug is on\n"
-        << "  :paste                paste code into an editable buffer; finish with :end\n"
+        << "  :paste                paste code into an editable buffer; finish paste with :end\n"
         << "  :show                 show buffered code with line numbers\n"
         << "  :edit N code          replace buffer line N\n"
         << "  :insert N code        insert before buffer line N\n"
         << "  :delete N             delete buffer line N\n"
-        << "  :run                  execute buffered code\n"
+        << "  :run                  execute buffered code or load functions/imports\n"
         << "  :clear                clear buffered code\n"
+        << "  EXIT                  halt the running program/REPL session\n"
         << "  :quit / :exit         leave REPL and optionally save session as .in10s\n"
         << "\n"
         << "Line editor: arrows, Home/End, Delete, Ctrl-A/E, Ctrl-K/U/W, Ctrl-L.\n"
-        << "Enter one instruction, a semicolon chain, or a multi-line block, for example:\n"
+        << "Enter one instruction, a semicolon chain, an import, or a function definition, for example:\n"
         << "  SET \"hello\"\n"
         << "  MOVE 1 ; PRINT\n"
+        << "  IMPORT stdlib.intense\n"
+        << "  def greet\n"
+        << "  SET \"hello from function\"\n"
+        << "  PRINT\n"
+        << "  RET\n"
+        << "  end\n"
+        << "  CALL greet\n"
         << "  PRINT_TAPE 2\n"
         << "  SET (SET \"generated\" ; PRINT)\n"
         << "  EXEC\n"
         << "\n";
 }
 
-static void saveReplSession(const std::vector<std::string>& history) {
+static void saveReplSession(
+    const std::vector<std::string>& sessionMain,
+    const std::vector<std::string>& sessionSource
+) {
     std::cout << "Save entered code as .in10s? [y/N]: ";
     std::string answer;
     std::getline(std::cin, answer);
@@ -577,8 +723,13 @@ static void saveReplSession(const std::vector<std::string>& history) {
         return;
     }
 
+    for (const auto& line : sessionSource)
+        out << line << "\n";
+    if (!sessionSource.empty())
+        out << "\n";
+
     out << "main:\n";
-    for (const auto& line : history)
+    for (const auto& line : sessionMain)
         out << "    " << line << "\n";
     out << "    RET\n";
     std::cout << "Saved " << path << "\n";
@@ -607,7 +758,10 @@ static int runRepl(int argc, char* argv[]) {
     }
 
     VM vm(file, tapeCount, debugMode, stepMode);
+    std::filesystem::path replBaseDir = std::filesystem::current_path();
     std::vector<std::string> history;
+    std::vector<std::string> sessionMain;
+    std::vector<std::string> sessionSource;
     std::vector<std::string> buffer;
 
     printReplHelp();
@@ -615,7 +769,7 @@ static int runRepl(int argc, char* argv[]) {
 
     std::string entry;
     while (true) {
-        if (!readReplEntry("in10s> ", entry, history))
+        if (!readReplEntry("intense> ", entry, history))
             break;
         std::string line = trim(entry);
         if (line.empty())
@@ -626,6 +780,19 @@ static int runRepl(int argc, char* argv[]) {
         }
         if (line == ":help") {
             printReplHelp();
+            continue;
+        }
+
+        if (isDefLine(line) || isGlobalLabelOnlyLine(line)) {
+            std::string source;
+            if (!collectDefinitionSource(entry, history, source))
+                continue;
+            try {
+                bool lastWasPrintTape = false;
+                executeReplSource(vm, source, history, sessionMain, sessionSource, replBaseDir, lastWasPrintTape);
+            } catch (const std::exception& e) {
+                std::cerr << "Error: " << e.what() << "\n";
+            }
             continue;
         }
 
@@ -800,7 +967,17 @@ static int runRepl(int argc, char* argv[]) {
                 source << bufferedLine << "\n";
             try {
                 bool lastWasPrintTape = false;
-                bool ran = executeReplSource(vm, source.str(), history, lastWasPrintTape);
+                bool ran = executeReplSource(
+                    vm,
+                    source.str(),
+                    history,
+                    sessionMain,
+                    sessionSource,
+                    replBaseDir,
+                    lastWasPrintTape
+                );
+                if (vm.isHalted())
+                    break;
                 if (ran && !lastWasPrintTape)
                     std::cout << vm.tapeSnapshot();
             } catch (const std::exception& e) {
@@ -812,7 +989,17 @@ static int runRepl(int argc, char* argv[]) {
 
         try {
             bool lastWasPrintTape = false;
-            bool ran = executeReplSource(vm, entry, history, lastWasPrintTape);
+            bool ran = executeReplSource(
+                vm,
+                entry,
+                history,
+                sessionMain,
+                sessionSource,
+                replBaseDir,
+                lastWasPrintTape
+            );
+            if (vm.isHalted())
+                break;
             if (!ran)
                 continue;
             if (ran && lastWasPrintTape)
@@ -824,7 +1011,7 @@ static int runRepl(int argc, char* argv[]) {
         std::cout << vm.tapeSnapshot();
     }
 
-    saveReplSession(history);
+    saveReplSession(sessionMain, sessionSource);
     return 0;
 }
 

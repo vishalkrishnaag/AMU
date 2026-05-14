@@ -1,0 +1,17 @@
+# Test: EXIT halts the whole program, including nested calls and code blocks
+# Run: ./intense.out examples/test_exit.in10s main 4
+
+main:
+    SET "before-call"
+    PRINT
+    CALL nested_exit
+    SET "after-call"
+    PRINT             # must never execute
+    RET
+
+nested_exit:
+    SET (SET "inside-code-block" ; PRINT ; EXIT ; SET "after-exit" ; PRINT)
+    EXEC
+    SET "after-exec"
+    PRINT             # must never execute
+    RET
