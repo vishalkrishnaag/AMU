@@ -1,9 +1,0 @@
-{
-  "kind": "common_algorithm_templates",
-  "templates": [
-    {"name": "fact_lookup", "description": "answer from subject relation memory"},
-    {"name": "addition", "description": "extract two numeric operands and ADD"},
-    {"name": "multiplication", "description": "extract two numeric operands and MUL"},
-    {"name": "reverse_word", "description": "extract target word and REVERSE"}
-  ]
-}

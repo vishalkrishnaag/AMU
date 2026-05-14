@@ -1,0 +1,54 @@
+# Test: symbolic graph traversal and logic-state ranking
+#
+# Run:
+#   ./intense.out examples/test_db_graph_traversal.in10s main 4
+
+main:
+    SET "host=localhost port=5432 dbname=AMU user=postgres password=postgres"
+    DBCONNECT
+    PRINTJ
+
+    READFILE "training/common_memory/postgres_schema.sql"
+    DBEXEC
+    PRINTJ
+
+    DBDELETE "logic_edges" "source_key IN ('cat','mammal','animal') OR target_key IN ('cat','mammal','animal','oxygen','count_4')"
+    PRINTJ
+    DBDELETE "logic_nodes" "node_key IN ('cat','mammal','animal','oxygen','count_4')"
+    PRINTJ
+
+    SET {"node_key":"cat","kind":"entity","payload":{"name":"cat"},"confidence":0.95}
+    DBINSERT "logic_nodes"
+    PRINTJ
+    SET {"node_key":"mammal","kind":"class","payload":{"name":"mammal"},"confidence":0.95}
+    DBINSERT "logic_nodes"
+    PRINTJ
+    SET {"node_key":"animal","kind":"class","payload":{"name":"animal"},"confidence":0.95}
+    DBINSERT "logic_nodes"
+    PRINTJ
+    SET {"node_key":"oxygen","kind":"concept","payload":{"name":"oxygen"},"confidence":0.9}
+    DBINSERT "logic_nodes"
+    PRINTJ
+    SET {"node_key":"count_4","kind":"quantity","payload":{"value":"4","number":4},"confidence":0.98}
+    DBINSERT "logic_nodes"
+    PRINTJ
+
+    SET {"source_key":"cat","relation":"is_a","target_key":"mammal","logic_weight":{"state":"confirmed","support":"taxonomy","scope":"normal_case"},"evidence":{"text":"cat is mammal"}}
+    DBINSERT "logic_edges"
+    PRINTJ
+    SET {"source_key":"mammal","relation":"is_a","target_key":"animal","logic_weight":{"state":"confirmed","support":"taxonomy","scope":"normal_case"},"evidence":{"text":"mammal is animal"}}
+    DBINSERT "logic_edges"
+    PRINTJ
+    SET {"source_key":"animal","relation":"breathes","target_key":"oxygen","logic_weight":{"state":"assumed","support":"general_knowledge","scope":"most_cases"},"evidence":{"text":"animals breathe oxygen"}}
+    DBINSERT "logic_edges"
+    PRINTJ
+    SET {"source_key":"cat","relation":"legs_count","target_key":"count_4","logic_weight":{"state":"preferred","support":"training_confirmed","scope":"normal_case"},"evidence":{"text":"cat has 4 legs"},"generated_logic":"SET 4"}
+    DBINSERT "logic_edges"
+    PRINTJ
+
+    DBQUERY "WITH RECURSIVE walk(depth, path, source_key, relation, target_key, logic_weight) AS (SELECT 1, ARRAY[e.source_key, e.target_key], e.source_key, e.relation, e.target_key, e.logic_weight FROM logic_edges e WHERE e.source_key = 'cat' AND e.validity = 'active' UNION ALL SELECT w.depth + 1, w.path || e.target_key, e.source_key, e.relation, e.target_key, e.logic_weight FROM walk w JOIN logic_edges e ON e.source_key = w.target_key WHERE w.depth < 3 AND e.validity = 'active' AND NOT e.target_key = ANY(w.path)) SELECT depth, source_key, relation, target_key, logic_weight::text AS logic_weight FROM walk ORDER BY depth, CASE logic_weight->>'state' WHEN 'preferred' THEN 1 WHEN 'confirmed' THEN 2 WHEN 'assumed' THEN 3 WHEN 'weak_assumption' THEN 4 WHEN 'disputed' THEN 5 ELSE 6 END, relation"
+    PRINTJ
+
+    DBCLOSE
+    PRINTJ
+    RET

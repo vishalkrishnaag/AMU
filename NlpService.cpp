@@ -83,7 +83,13 @@ std::string numberTokenValue(const std::string& token) {
 long long numberTokenAsInt(const std::string& token) {
     std::string value = numberTokenValue(token);
     if (value.empty()) return 0;
-    return std::stoll(value);
+    try {
+        return std::stoll(value);
+    } catch (const std::out_of_range&) {
+        throw std::runtime_error("NLP: numeric token is out of range: '" + value + "'");
+    } catch (const std::invalid_argument&) {
+        throw std::runtime_error("NLP: numeric token must be an integer, got '" + value + "'");
+    }
 }
 
 List tokenListValue(const std::vector<std::string>& tokens) {

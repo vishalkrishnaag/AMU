@@ -1,0 +1,31 @@
+# Test: TRY/RAISE over executable Code cells
+# Run: ./intense.out examples/test_try_catch.in10s main 4
+
+main:
+    CALL test_try_without_error
+    CALL test_try_with_catch
+    CALL test_try_without_catch_stores_error
+    RET
+
+test_try_without_error:
+    SEEK 0
+    SET (SET "ok" ; PRINT)
+    TRY
+    RET
+
+test_try_with_catch:
+    SEEK 10
+    SET (SET 4 ; DIV 0 ; SET "unreachable")
+    MOVE 1
+    SET (JSONGET "error" ; PRINT ; SET "recovered" ; PRINT)
+    BACK 1
+    TRY 11
+    RET
+
+test_try_without_catch_stores_error:
+    SEEK 20
+    SET (RAISE "manual_failure")
+    TRY
+    JSONGET "handled"
+    PRINTJ
+    RET

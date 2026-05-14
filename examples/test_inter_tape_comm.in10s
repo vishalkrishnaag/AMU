@@ -1,0 +1,49 @@
+# Test: inter-tape read/write/swap and message queues
+# Run: ./intense.out examples/test_inter_tape_comm.in10s main 4
+
+main:
+    CALL test_direct_tape_read_write
+    CALL test_tape_message_queue
+    RET
+
+test_direct_tape_read_write:
+    TAPE 0
+    SEEK 0
+    SET "observe"
+    TAPEWRITE 1 5
+
+    SEEK 1
+    TAPEREAD 1 5
+    PRINT             # -> observe
+
+    SET "left"
+    TAPESWAP 1 5
+    PRINT             # -> observe
+
+    SEEK 2
+    TAPEREAD 1 5
+    PRINT             # -> left
+    RET
+
+test_tape_message_queue:
+    TAPE 0
+    SEEK 10
+    SET {"from":"tape0","msg":"hello"}
+    TAPESEND 1 20
+
+    SEEK 11
+    SET "second-message"
+    TAPESEND 1 20
+
+    SEEK 12
+    TAPERECV 1 20
+    PRINTJ            # -> {"from":"tape0","msg":"hello"}
+
+    SEEK 13
+    TAPERECV 1 20
+    PRINT             # -> second-message
+
+    SEEK 14
+    TAPERECV 1 20
+    PRINTJ            # -> null
+    RET

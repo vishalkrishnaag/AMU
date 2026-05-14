@@ -95,15 +95,13 @@ observe_problem:
 load_common_memory:
     TAPE 1
     SEEK 0
-    READFILE "training/common_memory/facts.json"
-    JSONPARSE
+    SET {"cat_legs":4,"dog_legs":4,"horse_legs":4,"human_legs":2,"spider_legs":8,"ant_legs":6,"bird_wings":2,"cat_wings":0,"fish_lives_in":"water","earth_shape":"roughly spherical"}
 
     SEEK 1
-    READFILE "training/common_memory/algorithm_templates.json"
-    JSONPARSE
+    SET {"addition":"extract numeric operands around plus and add them","multiplication":"extract numeric operands around times and multiply them","reverse_word":"extract requested word and reverse its characters","fact_lookup":"match subject and relation against embedded learned facts"}
 
     SEEK 2
-    SET {"contract":"answer from learned memory or reusable route; generate candidate only after route is known","unknown_policy":"unable_to_answer","self_modification":"disabled; proposed changes must be trainer-approved"}
+    SET {"contract":"answer from learned memory or reusable route; generate candidate only after route is known","memory":"embedded route seeds; durable training memory is tape-native Postgres","unknown_policy":"unable_to_answer","self_modification":"disabled; proposed changes must be trainer-approved"}
 
     SEEK 3
     SET ["fact_lookup","addition","multiplication","reverse_word"]
@@ -496,7 +494,7 @@ $fish_water:
     SEEK 0
     SET "water"
     SEEK 1
-    SET {"route":"fact_lookup","status":"answered","source":"training/common_memory/facts.json","relation":"lives_in"}
+    SET {"route":"fact_lookup","status":"answered","source":"embedded_poet_memory","relation":"lives_in"}
     SEEK 2
     SET 1
     RET
@@ -506,7 +504,7 @@ $earth_shape:
     SEEK 0
     SET "roughly spherical"
     SEEK 1
-    SET {"route":"fact_lookup","status":"answered","source":"training/common_memory/facts.json","relation":"shape"}
+    SET {"route":"fact_lookup","status":"answered","source":"embedded_poet_memory","relation":"shape"}
     SEEK 2
     SET 1
     RET
@@ -524,7 +522,7 @@ set_answer_0_fact:
     SEEK 0
     SET 0
     SEEK 1
-    SET {"route":"fact_lookup","status":"answered","source":"training/common_memory/facts.json"}
+    SET {"route":"fact_lookup","status":"answered","source":"embedded_poet_memory"}
     SEEK 2
     SET 1
     RET
@@ -534,7 +532,7 @@ set_answer_2_fact:
     SEEK 0
     SET 2
     SEEK 1
-    SET {"route":"fact_lookup","status":"answered","source":"training/common_memory/facts.json"}
+    SET {"route":"fact_lookup","status":"answered","source":"embedded_poet_memory"}
     SEEK 2
     SET 1
     RET
@@ -544,7 +542,7 @@ set_answer_4_fact:
     SEEK 0
     SET 4
     SEEK 1
-    SET {"route":"fact_lookup","status":"answered","source":"training/common_memory/facts.json"}
+    SET {"route":"fact_lookup","status":"answered","source":"embedded_poet_memory"}
     SEEK 2
     SET 1
     RET
@@ -554,7 +552,7 @@ set_answer_6_fact:
     SEEK 0
     SET 6
     SEEK 1
-    SET {"route":"fact_lookup","status":"answered","source":"training/common_memory/facts.json"}
+    SET {"route":"fact_lookup","status":"answered","source":"embedded_poet_memory"}
     SEEK 2
     SET 1
     RET
@@ -564,7 +562,7 @@ set_answer_8_fact:
     SEEK 0
     SET 8
     SEEK 1
-    SET {"route":"fact_lookup","status":"answered","source":"training/common_memory/facts.json"}
+    SET {"route":"fact_lookup","status":"answered","source":"embedded_poet_memory"}
     SEEK 2
     SET 1
     RET

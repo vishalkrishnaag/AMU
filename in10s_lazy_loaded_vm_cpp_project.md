@@ -98,8 +98,8 @@ Resolved relative to the importing file. Circular imports are detected and skipp
 | `BACK n`    | Move tape pointer backward by `n` cells |
 | `SEEK n`    | Set the active tape pointer to cell `n` |
 | `HOME`      | Reset the active tape pointer to cell 0 |
-| `TAPE n`    | Switch active tape to index `n` |
-| `PRINT_TAPE n` | Print tape `n` without switching the active tape |
+| `TAPE n`    | Switch active tape to non-negative index `n`; tapes grow on demand |
+| `PRINT_TAPE n` | Print tape `n` without switching the active tape; tapes grow on demand |
 
 ### Inter-Tape Communication
 
@@ -111,6 +111,22 @@ Resolved relative to the importing file. Circular imports are detected and skipp
 | `TAPESWAP tape [cell]` / `TSWAP` | Swap current cell with another tape cell |
 | `TAPESEND tape [cell] [value]` / `TSEND` / `SEND` | Append current cell, or `value`, to a list mailbox on another tape |
 | `TAPERECV tape [cell]` / `TRECV` / `RECV` | Pop the oldest value from a list mailbox into the current cell; empty mailbox gives `nil` |
+
+### Tape-Native Postgres Memory
+
+These instructions treat Postgres tables as a persisted tape replica. Reasoning
+still happens in VM runtime; programs load only the tape cells they need. The
+Postgres replica stores scalar/code cells; nested structures should be expressed
+across tape cells instead of JSON.
+
+| Instruction | Description |
+|-------------|-------------|
+| `DB_TAPE_OPEN space [kind]` | Ensure a tape memory namespace exists |
+| `DB_TAPE_INPUT space [tape] [cell] [value]` | Persist one scalar/code tape cell; defaults to active tape, current cell, current value |
+| `DB_TAPE_OUTPUT space [tape] [cell]` | Load one persisted cell into the current VM cell |
+| `DB_TAPE_SAVE space [tape|*]` | Persist occupied cells from one tape or all current tapes |
+| `DB_TAPE_LOAD space [tape|*]` | Load persisted cells from one tape or all tapes |
+| `DB_TAPE_EVENT space event_type [note]` | Record a runtime reasoning/process marker |
 
 ### Cell Operations
 

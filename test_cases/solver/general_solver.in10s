@@ -1,0 +1,442 @@
+# Tape-native general problem solver.
+#
+# Calling convention:
+#   SETARG 0 "<problem>"
+#   SETARG 1 "<run_space>"
+#   CALL general_solve
+#
+# The caller owns DBCONNECT and schema setup.
+
+IMPORT strategies/arithmetic.in10s
+IMPORT strategies/symbolic_logic.in10s
+IMPORT strategies/root_cause.in10s
+IMPORT strategies/comparison.in10s
+IMPORT strategies/fallback.in10s
+
+general_solve:
+    CALL solver_clear_runtime
+    CALL solver_observe
+    CALL solver_classify
+    CALL solver_retrieve_relevant
+
+    TAPE 1
+    SEEK 3
+    JMPIF $reuse_exact_memory
+
+    CALL solver_execute_strategy
+    JMP $verify_and_store
+
+$reuse_exact_memory:
+    CALL strategy_memory_reuse
+
+$verify_and_store:
+    CALL solver_verify
+    CALL solver_prepare_final_metadata
+    CALL solver_store_run
+    TAPE 4
+    RET
+
+solver_clear_runtime:
+    TAPE 0
+    CLEAR_TAPE
+    TAPE 1
+    CLEAR_TAPE
+    TAPE 2
+    CLEAR_TAPE
+    TAPE 3
+    CLEAR_TAPE
+    TAPE 4
+    CLEAR_TAPE
+    TAPE 5
+    CLEAR_TAPE
+    TAPE 0
+    RET
+
+solver_event_observe:
+    TAPE 5
+    SEEK 98
+    GETARG 1
+    SEEK 99
+    DB_TAPE_EVENT @98 "observe" "input normalized"
+    RET
+
+solver_event_retrieve:
+    TAPE 5
+    SEEK 98
+    GETARG 1
+    SEEK 99
+    DB_TAPE_EVENT @98 "retrieve" "metadata search complete"
+    RET
+
+solver_event_answer:
+    TAPE 5
+    SEEK 98
+    GETARG 1
+    SEEK 99
+    DB_TAPE_EVENT @98 "answer" "run stored"
+    RET
+
+solver_observe:
+    TAPE 0
+    SEEK 0
+    GETARG 0
+
+    SEEK 1
+    GETARG 0
+    LOWER
+
+    SEEK 2
+    GETARG 0
+    LOWER
+
+    SEEK 3
+    SET "fallback"
+
+    SEEK 4
+    SET "unselected"
+
+    SEEK 5
+    SET "observed"
+
+    CALL solver_event_observe
+    RET
+
+solver_classify:
+    TAPE 5
+    SEEK 0
+    TAPE 0
+    SEEK 1
+    COPY 5
+    TAPE 5
+    SEEK 0
+    FIND " plus "
+    ADD 1
+    JMPIF $class_arithmetic
+
+    SEEK 0
+    TAPE 0
+    SEEK 1
+    COPY 5
+    TAPE 5
+    SEEK 0
+    FIND " times "
+    ADD 1
+    JMPIF $class_arithmetic
+
+    SEEK 0
+    TAPE 0
+    SEEK 1
+    COPY 5
+    TAPE 5
+    SEEK 0
+    FIND "why"
+    ADD 1
+    JMPIF $class_root_cause
+
+    SEEK 0
+    TAPE 0
+    SEEK 1
+    COPY 5
+    TAPE 5
+    SEEK 0
+    FIND "cause"
+    ADD 1
+    JMPIF $class_root_cause
+
+    SEEK 0
+    TAPE 0
+    SEEK 1
+    COPY 5
+    TAPE 5
+    SEEK 0
+    FIND "compare"
+    ADD 1
+    JMPIF $class_comparison
+
+    SEEK 0
+    TAPE 0
+    SEEK 1
+    COPY 5
+    TAPE 5
+    SEEK 0
+    FIND "therefore"
+    ADD 1
+    JMPIF $class_symbolic_logic
+
+    TAPE 0
+    SEEK 3
+    SET "fallback"
+    RET
+
+$class_arithmetic:
+    TAPE 0
+    SEEK 3
+    SET "arithmetic"
+    RET
+
+$class_root_cause:
+    TAPE 0
+    SEEK 3
+    SET "root_cause"
+    RET
+
+$class_comparison:
+    TAPE 0
+    SEEK 3
+    SET "comparison"
+    RET
+
+$class_symbolic_logic:
+    TAPE 0
+    SEEK 3
+    SET "symbolic_logic"
+    RET
+
+solver_retrieve_relevant:
+    TAPE 1
+    SEEK 0
+    TAPE 0
+    SEEK 2
+    COPY 1
+
+    TAPE 1
+    SEEK 0
+    DB_TAPE_FIND 0 2 @0
+    TAPEWRITE 1 2 @0
+
+    SEEK 3
+    TAPEREAD 1 2
+    MATCH "str"
+
+    SEEK 4
+    TAPE 0
+    SEEK 3
+    COPY 1
+
+    TAPE 1
+    SEEK 4
+    DB_TAPE_FIND 0 3 @4
+    TAPEWRITE 1 5 @4
+
+    CALL solver_event_retrieve
+    RET
+
+solver_execute_strategy:
+    TAPE 5
+    SEEK 10
+    TAPE 0
+    SEEK 3
+    COPY 5
+    TAPE 5
+    SEEK 10
+    MATCH "arithmetic"
+    JMPIF $run_arithmetic
+
+    SEEK 10
+    TAPE 0
+    SEEK 3
+    COPY 5
+    TAPE 5
+    SEEK 10
+    MATCH "root_cause"
+    JMPIF $run_root_cause
+
+    SEEK 10
+    TAPE 0
+    SEEK 3
+    COPY 5
+    TAPE 5
+    SEEK 10
+    MATCH "comparison"
+    JMPIF $run_comparison
+
+    SEEK 10
+    TAPE 0
+    SEEK 3
+    COPY 5
+    TAPE 5
+    SEEK 10
+    MATCH "symbolic_logic"
+    JMPIF $run_symbolic_logic
+
+    CALL strategy_fallback
+    RET
+
+$run_arithmetic:
+    CALL strategy_arithmetic
+    RET
+
+$run_root_cause:
+    CALL strategy_root_cause
+    RET
+
+$run_comparison:
+    CALL strategy_comparison
+    RET
+
+$run_symbolic_logic:
+    CALL strategy_symbolic_logic
+    RET
+
+strategy_memory_reuse:
+    TAPE 1
+    SEEK 1
+    DB_TAPE_OUTPUT @2 4 0
+
+    TAPE 4
+    SEEK 0
+    TAPE 1
+    SEEK 1
+    COPY 4
+
+    TAPE 4
+    SEEK 1
+    SET "answered"
+
+    SEEK 2
+    SET "memory_reuse"
+
+    SEEK 3
+    SET "reused exact prior tape answer"
+
+    SEEK 4
+    SET 100
+
+    TAPE 2
+    SEEK 1
+    SET "retrieved exact prior problem signature"
+
+    SEEK 5
+    TAPE 4
+    SEEK 0
+    COPY 2
+    RET
+
+solver_verify:
+    TAPE 5
+    SEEK 30
+    TAPE 4
+    SEEK 0
+    COPY 5
+    TAPE 5
+    SEEK 30
+    MATCH "nil"
+    JMPIF $verify_failed
+
+    TAPE 3
+    SEEK 0
+    SET "verified"
+    SEEK 1
+    SET "answer_present"
+    SEEK 2
+    TAPE 4
+    SEEK 4
+    COPY 3
+    RET
+
+$verify_failed:
+    TAPE 3
+    SEEK 0
+    SET "failed"
+    SEEK 1
+    SET "missing_answer"
+    SEEK 2
+    SET 0
+
+    TAPE 4
+    SEEK 0
+    SET "unable_to_solve"
+    SEEK 1
+    SET "failed"
+    SEEK 4
+    SET 0
+    RET
+
+solver_prepare_final_metadata:
+    TAPE 0
+    SEEK 4
+    TAPE 4
+    SEEK 2
+    COPY 0
+
+    TAPE 0
+    SEEK 5
+    TAPE 4
+    SEEK 1
+    COPY 0
+
+    TAPE 0
+    SEEK 6
+    TAPE 4
+    SEEK 0
+    COPY 0
+
+    TAPE 0
+    SEEK 7
+    TAPE 4
+    SEEK 4
+    COPY 0
+    RET
+
+solver_store_run:
+    TAPE 0
+    SEEK 99
+    GETARG 1
+    SEEK 0
+    DB_TAPE_INPUT @99 0 0 @0
+    SEEK 1
+    DB_TAPE_INPUT @99 0 1 @1
+    SEEK 2
+    DB_TAPE_INPUT @99 0 2 @2
+    SEEK 3
+    DB_TAPE_INPUT @99 0 3 @3
+    SEEK 4
+    DB_TAPE_INPUT @99 0 4 @4
+    SEEK 5
+    DB_TAPE_INPUT @99 0 5 @5
+    SEEK 6
+    DB_TAPE_INPUT @99 0 6 @6
+    SEEK 7
+    DB_TAPE_INPUT @99 0 7 @7
+
+    TAPE 2
+    SEEK 99
+    GETARG 1
+    SEEK 1
+    DB_TAPE_INPUT @99 2 1 @1
+    SEEK 2
+    DB_TAPE_INPUT @99 2 2 @2
+    SEEK 3
+    DB_TAPE_INPUT @99 2 3 @3
+    SEEK 4
+    DB_TAPE_INPUT @99 2 4 @4
+    SEEK 5
+    DB_TAPE_INPUT @99 2 5 @5
+
+    TAPE 3
+    SEEK 99
+    GETARG 1
+    SEEK 0
+    DB_TAPE_INPUT @99 3 0 @0
+    SEEK 1
+    DB_TAPE_INPUT @99 3 1 @1
+    SEEK 2
+    DB_TAPE_INPUT @99 3 2 @2
+
+    TAPE 4
+    SEEK 99
+    GETARG 1
+    SEEK 0
+    DB_TAPE_INPUT @99 4 0 @0
+    SEEK 1
+    DB_TAPE_INPUT @99 4 1 @1
+    SEEK 2
+    DB_TAPE_INPUT @99 4 2 @2
+    SEEK 3
+    DB_TAPE_INPUT @99 4 3 @3
+    SEEK 4
+    DB_TAPE_INPUT @99 4 4 @4
+
+    CALL solver_event_answer
+    TAPE 4
+    RET

@@ -1,0 +1,63 @@
+# Test: JOIN and small JSON/map/list helpers
+# Run: ./intense.out examples/test_join_json_utils.in10s main 4
+
+main:
+    CALL test_join_literal_delimiter
+    CALL test_join_cell_delimiter
+    CALL test_jsonhas
+    CALL test_jsonkeys
+    CALL test_jsondel_map
+    CALL test_jsondel_list
+    RET
+
+test_join_literal_delimiter:
+    SET ["cat","has",4,"legs"]
+    JOIN " "
+    PRINT             # -> cat has 4 legs
+    RET
+
+test_join_cell_delimiter:
+    SEEK 10
+    SET "|"
+    SEEK 11
+    SET ["subject","relation","answer"]
+    JOIN @10
+    PRINT             # -> subject|relation|answer
+    RET
+
+test_jsonhas:
+    SET {"cat":4,"dog":4}
+    JSONHAS "cat"
+    PRINTJ            # -> true
+
+    MOVE 1
+    SET {"cat":4,"dog":4}
+    JSONHAS "bird"
+    PRINTJ            # -> false
+
+    MOVE 1
+    SET ["zero","one"]
+    JSONHAS 1
+    PRINTJ            # -> true
+    RET
+
+test_jsonkeys:
+    SET {"subject":"cat","relation":"legs"}
+    JSONKEYS
+    JOIN ","
+    PRINT             # -> relation,subject
+    RET
+
+test_jsondel_map:
+    SET {"cat":4,"dog":4}
+    JSONDEL "dog"
+    JSONHAS "dog"
+    PRINTJ            # -> false
+    RET
+
+test_jsondel_list:
+    SET ["a","b","c"]
+    JSONDEL 1
+    JOIN "-"
+    PRINT             # -> a-c
+    RET

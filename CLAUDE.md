@@ -46,6 +46,7 @@ REPL mode executes one symbolic instruction at a time, prints the active tape af
 - **`$label:`** in function bodies = local jump target; does NOT terminate function loading
 - **`argRegs`** vector in VM saved/restored across CALL/RET — callee inherits caller's args, nested calls are transparent
 - **`@N` cell references in arithmetic args** — `ADD @2` reads the operand from tape cell N of the active tape instead of treating it as a literal; resolved by `resolveOperand()` in VM.cpp, used by ADD/SUB/MUL/DIV/MOD
+- **Dynamic tape growth** — non-negative tape indexes grow the VM tape vector on demand; the startup tape count is only the initial capacity.
 
 ## Instruction Categories
 
@@ -56,7 +57,7 @@ Type sys: `TYPE`, `CAST`
 Arithmetic: `ADD`, `SUB`, `MUL`, `DIV`, `MOD`, `ABS`, `NEG` — binary ops accept literal or `@N`; unary ops work on current cell  
 Strings: `CONCAT`, `SPLIT`, `JOIN`, `SUBSTR`, `FIND`, `REPLACE`, `UPPER`, `LOWER`, `REVERSE`  
 File I/O: `READFILE`, `WRITEFILE`, `INPUT`  
-PostgreSQL: `DBCONNECT`, `DBSTATUS`, `DBEXEC`, `DBQUERY`, `DBSELECT`, `DBINSERT`, `DBUPDATE`, `DBDELETE`, `DBCLOSE` — loaded through `libpq` at runtime  
+PostgreSQL: `DBCONNECT`, `DBSTATUS`, `DBEXEC`, `DBQUERY`, `DBSELECT`, `DBINSERT`, `DBUPDATE`, `DBDELETE`, `DBCLOSE`, `DB_TAPE_OPEN`, `DB_TAPE_INPUT`, `DB_TAPE_OUTPUT`, `DB_TAPE_SAVE`, `DB_TAPE_LOAD`, `DB_TAPE_EVENT` — loaded through `libpq` at runtime  
 Homoiconic: `EXEC`, `EVAL`, `QUOTE`, `MATCH`, `TRY`, `RAISE`  
 Control flow: `JMP $label`, `JMPIF $label`, `JMPNOT $label`  
 Code manip: `CODELEN`, `CODEGET`, `CODESET`, `CODEAPPEND`, `APPEND`, `MAKEANSWERCODE`, `MAKEANSWERSOURCE`  

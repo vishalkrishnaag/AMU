@@ -1,0 +1,31 @@
+# DB Poet memory event/link schema test.
+#
+# Edit the connection string below to match your local PostgreSQL role/database.
+# This mirrors training/common_memory/postgres_schema.sql using DBEXEC and then
+# inserts/selects one memory event with DBINSERT/DBSELECT.
+#
+# Run:
+#   ./intense.out examples/test_db_poet_memory_schema.in10s main 4
+
+main:
+    SEEK 0
+    SET "host=localhost port=5432 dbname=intense user=intense password=intense"
+    DBCONNECT @0
+    PRINTJ
+
+    DBEXEC "CREATE TABLE IF NOT EXISTS poet_memory_events (id bigserial PRIMARY KEY, source text NOT NULL DEFAULT 'user', input_text text NOT NULL, output_text text, route text, confidence double precision, context jsonb NOT NULL DEFAULT '{}'::jsonb, generated_logic text, feedback text, created_at timestamptz NOT NULL DEFAULT now())"
+    PRINTJ
+
+    DBEXEC "CREATE TABLE IF NOT EXISTS poet_memory_links (id bigserial PRIMARY KEY, from_event_id bigint REFERENCES poet_memory_events(id) ON DELETE CASCADE, to_event_id bigint REFERENCES poet_memory_events(id) ON DELETE CASCADE, relation text NOT NULL, strength double precision NOT NULL DEFAULT 1.0, note text, created_at timestamptz NOT NULL DEFAULT now())"
+    PRINTJ
+
+    SET {"source":"example","input_text":"how many legs does a cat have","output_text":"4","route":"fact_lookup","confidence":0.95,"context":{"subject":"cat","relation":"legs","intent":"count"},"feedback":"example_insert"}
+    DBINSERT "poet_memory_events"
+    PRINTJ
+
+    DBSELECT "poet_memory_events" "source = 'example' AND input_text = 'how many legs does a cat have'"
+    PRINTJ
+
+    DBCLOSE
+    PRINTJ
+    RET

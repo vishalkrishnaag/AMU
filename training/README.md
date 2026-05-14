@@ -1,105 +1,63 @@
-# Poet Training
+# Training And Memory
 
-The training folder now uses a single common-memory model instead of many
-`training/AMU*` work folders.
+The active memory direction is tape-native Postgres storage. Postgres is used as
+a persisted replica of VM tape cells; reasoning and thought still happen at
+runtime inside the tape VM.
 
-## Current Flow
+## Active Memory Model
 
-```text
-training/common_memory/test_cases.tsv
-  -> training/run_amu_epoch.sh
-  -> writes one temporary runner per test case
-  -> runner imports training/poet_algorithm_v1.in10s
-  -> Poet answers directly from common memory or reusable routes
-  -> Poet writes a generated candidate algorithm for that input
-  -> script executes the candidate and records pass/fail output
-  -> all artifacts land under training/common_memory/generated_outputs/latest/
-```
-
-## Common Memory
-
-`training/common_memory/` is the durable model/memory area:
+`training/common_memory/postgres_schema.sql` defines:
 
 ```text
-facts.json                 learned/common facts
-algorithm_templates.json   reusable route names and intent
-training_examples.json     reserved learned-example store
-test_cases.tsv             test inputs and expected outputs
-postgres_schema.sql        optional Postgres schema for event/link and logic-network memory
-generated_outputs/latest/  latest generated runners, candidates, traces, report
+tape_spaces  named memory/run namespaces
+tape_cells   latest scalar/code cell values keyed by space, tape index, and cell index
+tape_events  runtime reasoning/process markers
 ```
 
-The VM also has optional PostgreSQL opcodes: `DBCONNECT`, `DBSTATUS`, `DBEXEC`,
-`DBQUERY`, `DBSELECT`, `DBINSERT`, `DBUPDATE`, `DBDELETE`, and `DBCLOSE`. They
-dynamically load `libpq` at runtime, so the VM still builds without Postgres
-installed. See `examples/postgres_memory.in10s`.
+The table model intentionally avoids JSON/JSONB and avoids graph-style
+`nodes`/`edges`. Nested structures should be encoded across tape cells instead
+of being stored as JSON. Programs should load only the required persisted
+tapes/cells, process them in the VM, then store the resulting tape cells back to
+Postgres.
 
-## Postgres Logic Network
+## VM Opcodes
 
-`postgres_schema.sql` now has two layers:
-
-- `poet_memory_events` and `poet_memory_links`: time-ordered observations,
-  outputs, feedback, and event-to-event links.
-- `logic_nodes` and `logic_edges`: stable concept nodes and weighted
-  relationships that Poet can retrieve as reasoning context.
-
-For the local AMU database:
-
-```bash
-./intense.out examples/test_db_amu_logic_network.in10s main 4
-```
-
-That example stores concepts like `cat`, `human`, `legs`, `count_4`, and edges
-such as `cat -> legs_count -> count_4`. The final query returns the retrieved
-answer path and generated logic (`SET 4`).
-
-Generated Poet-code proposals are stored under
-`training/common_memory/generated_outputs/latest/proposed_poet/`. They are not
-promoted automatically; a future trainer can test and approve them.
-
-## Run
-
-```bash
-training/run_amu_epoch.sh
-training/run_amu_epoch.sh training/common_memory/test_cases.tsv
-```
-
-The script produces:
+Postgres tape memory uses the regular connection opcodes plus:
 
 ```text
-training/common_memory/generated_outputs/latest/
-  candidates/
-  runners/
-  traces/
-  proposed_poet/
-  report.tsv
-  training_examples.tsv
-  summary.txt
+DB_TAPE_OPEN space [kind]
+DB_TAPE_INPUT space [tape] [cell] [value]
+DB_TAPE_OUTPUT space [tape] [cell]
+DB_TAPE_SAVE space [tape|*]
+DB_TAPE_LOAD space [tape|*]
+DB_TAPE_EVENT space event_type [note]
 ```
 
-## Test
+See `test_cases/` for the current tape-native test cases.
 
-```bash
-training/test_output_amu.sh
+## POET Training Driver
+
+`poet_memory_training.in10s` wraps `poet_algorithm_v1.in10s` with tape-native
+Postgres persistence:
+
+```text
+./intense.out training/poet_memory_training.in10s main 40
 ```
 
-This runs the current test cases and exits non-zero if any case fails.
+It seeds sample problems into `poet_training_samples`, reloads only the required
+sample tape for each run, analyzes the input with NLP tape operations, calls
+`poet_solve`, stores scalar result/feedback cells in `poet_training_run`, and
+then retrieves a stored answer.
 
-For a small direct smoke test:
+For a no-database POET smoke check:
 
-```bash
-./intense.out training/train_epoch.in10s main 8
+```text
+./intense.out training/poet_memory_training.in10s smoke_no_db 8
 ```
 
-## Poet Tape Layout
+## Legacy Poet Flow
 
-`poet_algorithm_v1.in10s` keeps concerns on separate tapes:
-
-| Tape | Role |
-|------|------|
-| 0 | Raw and normalized problem |
-| 1 | Common memory and route knowledge |
-| 2 | Token/NLP analysis |
-| 3 | Generated candidate code/source/metadata |
-| 4 | Direct answer, route metadata, execution result |
-| 5 | Scratch |
+The old JSON common-memory flow around `run_amu_epoch.sh` is legacy. The active
+training path is the tape-native Postgres driver above; `poet_algorithm_v1.in10s`
+is kept as the direct solver it calls, without depending on deleted JSON memory
+files.

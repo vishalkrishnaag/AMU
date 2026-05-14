@@ -23,6 +23,7 @@ private:
     std::stack<Frame> callStack;
     std::vector<Value> argRegs;     // argument register file for SETARG/GETARG
     void* dbConn = nullptr;          // optional PostgreSQL connection loaded through libpq at runtime
+    int ensureTapeIndex(long long index, const std::string& opcode);
 
 public:
     VM(
@@ -38,5 +39,8 @@ public:
     void execute(const Instruction& ins);
     void debug(const Instruction& ins);
     std::string tapeSnapshot(int radius = 3, int tapeIndex = -1) const;
+    std::string cellSnapshot(long long cellIndex, int tapeIndex = -1) const;
+    long long tapePointer(int tapeIndex = -1) const;
+    void setDebugMode(bool enable) { debugMode = enable; }
     void setStepMode(bool enable) { stepMode = enable; }
 };

@@ -1,10 +1,12 @@
 #include "VM.hpp"
 #include "Parser.hpp"
+#include "Lexer.hpp"
 #include <Eigen/Dense>
 #include <iostream>
 #include <fstream>
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <cmath>
 #include <sstream>
 #include <iomanip>
@@ -14,6 +16,8 @@
 #include <filesystem>
 #include <dlfcn.h>
 #include <unistd.h>
+#include <limits>
+#include <functional>
 
 // ---------------------------------------------------------------------------
 // Internal helpers (anonymous namespace)
@@ -56,6 +60,46 @@ bool isFloat(const std::string& token) {
         return false;
     }
     return hasDigits && hasDecimal;
+}
+
+long long parseLongLongStrict(const std::string& text, const std::string& context, const std::string& role) {
+    try {
+        size_t consumed = 0;
+        long long value = std::stoll(text, &consumed);
+        if (consumed == text.size())
+            return value;
+    } catch (const std::out_of_range&) {
+        throw std::runtime_error(context + ": " + role + " is out of range: '" + text + "'");
+    } catch (const std::invalid_argument&) {
+    }
+    throw std::runtime_error(context + ": " + role + " must be an integer, got '" + text + "'");
+}
+
+int parseIntStrict(const std::string& text, const std::string& context, const std::string& role) {
+    long long value = parseLongLongStrict(text, context, role);
+    if (value < std::numeric_limits<int>::min() || value > std::numeric_limits<int>::max())
+        throw std::runtime_error(context + ": " + role + " is out of int range: '" + text + "'");
+    return static_cast<int>(value);
+}
+
+size_t parseSizeStrict(const std::string& text, const std::string& context, const std::string& role) {
+    long long value = parseLongLongStrict(text, context, role);
+    if (value < 0)
+        throw std::runtime_error(context + ": " + role + " must be non-negative, got '" + text + "'");
+    return static_cast<size_t>(value);
+}
+
+double parseDoubleStrict(const std::string& text, const std::string& context, const std::string& role) {
+    try {
+        size_t consumed = 0;
+        double value = std::stod(text, &consumed);
+        if (consumed == text.size())
+            return value;
+    } catch (const std::out_of_range&) {
+        throw std::runtime_error(context + ": " + role + " is out of range: '" + text + "'");
+    } catch (const std::invalid_argument&) {
+    }
+    throw std::runtime_error(context + ": " + role + " must be numeric, got '" + text + "'");
 }
 
 std::string toUpperStr(const std::string& s) {
@@ -190,8 +234,8 @@ Value parseJsonLiteral(const std::string& text, size_t& pos) {
     if (lower == "null" || lower == "nil") return Value();
     if (lower == "true")                   return Value(true);
     if (lower == "false")                  return Value(false);
-    if (isInteger(token))                  return Value(std::stoll(token));
-    if (isFloat(token))                    return Value(std::stod(token));
+    if (isInteger(token))                  return Value(parseLongLongStrict(token, "JSON", "integer literal"));
+    if (isFloat(token))                    return Value(parseDoubleStrict(token, "JSON", "float literal"));
     return Value(std::move(token));
 }
 
@@ -264,30 +308,79 @@ Value parseJsonValue(const std::string& text, size_t& pos) {
 // Splits "(instr1 ; instr2 ; ...)" into a Code value.
 // Semicolons at depth 0 separate instructions; nesting is tracked.
 
-std::vector<std::string> splitOnSemicolon(const std::string& s) {
+std::vector<std::string> splitCodeStatements(const std::string& s) {
     std::vector<std::string> parts;
     std::string current;
     int depth = 0;
     bool inStr = false;
+    char quoteChar = '\0';
     bool escaped = false;
+    bool inComment = false;
 
     for (size_t i = 0; i < s.size(); ++i) {
         char c = s[i];
+
+        if (inComment) {
+            if (c == '\n') {
+                parts.push_back(current);
+                current.clear();
+                inComment = false;
+            } else {
+                current.push_back(c);
+            }
+            continue;
+        }
+
         if (escaped) { current.push_back(c); escaped = false; continue; }
         if (inStr) {
             current.push_back(c);
             if (c == '\\') escaped = true;
-            else if (c == '"') inStr = false;
+            else if (c == quoteChar) inStr = false;
             continue;
         }
-        if (c == '"') { inStr = true; current.push_back(c); continue; }
+        if (c == '"' || c == '\'') {
+            inStr = true;
+            quoteChar = c;
+            current.push_back(c);
+            continue;
+        }
+        if (c == '#') {
+            inComment = true;
+            current.push_back(c);
+            continue;
+        }
         if (c == '(' || c == '[' || c == '{') { depth++; current.push_back(c); continue; }
-        if (c == ')' || c == ']' || c == '}') { depth--; current.push_back(c); continue; }
-        if (c == ';' && depth == 0) { parts.push_back(current); current.clear(); continue; }
+        if (c == ')' || c == ']' || c == '}') {
+            if (depth > 0) depth--;
+            current.push_back(c);
+            continue;
+        }
+        if ((c == ';' || c == '\n') && depth == 0) {
+            parts.push_back(current);
+            current.clear();
+            continue;
+        }
         current.push_back(c);
     }
     if (!current.empty()) parts.push_back(current);
     return parts;
+}
+
+bool isLabelOnlyStatement(const std::string& statement) {
+    auto tokens = Lexer::tokenize(statement);
+    return tokens.size() == 1 && !tokens[0].empty() && tokens[0].back() == ':';
+}
+
+Code parseInstructionsFromSource(const std::string& source) {
+    Code result;
+    for (const auto& part : splitCodeStatements(source)) {
+        std::string piece = trimStr(part);
+        if (piece.empty() || isLabelOnlyStatement(piece)) continue;
+        auto ins = Parser::parse(piece, 0);
+        if (!ins.opcode.empty())
+            result.push_back(ins);
+    }
+    return result;
 }
 
 Value parseCodeBlockToken(const std::string& token) {
@@ -295,15 +388,16 @@ Value parseCodeBlockToken(const std::string& token) {
     if (token.size() < 2 || token.front() != '(' || token.back() != ')')
         throw std::runtime_error("Invalid code block token");
     std::string inner = token.substr(1, token.size() - 2);
-    Code result;
-    for (const auto& part : splitOnSemicolon(inner)) {
-        std::string piece = trimStr(part);
-        if (piece.empty()) continue;
-        auto ins = Parser::parse(piece, 0);
-        if (!ins.opcode.empty())
-            result.push_back(ins);
+    return Value(parseInstructionsFromSource(inner));
+}
+
+Code parseCodeSource(const std::string& source) {
+    std::string text = trimStr(source);
+    if (text.size() >= 2 && text.front() == '(' && text.back() == ')') {
+        Value parsed = parseCodeBlockToken(text);
+        return std::get<Code>(parsed.data);
     }
-    return Value(std::move(result));
+    return parseInstructionsFromSource(text);
 }
 
 // ---- Token → Value ---------------------------------------------------------
@@ -338,10 +432,10 @@ Value parseValue(const std::string& token) {
     }
 
     if (isInteger(token)) {
-        try { return Value(std::stoll(token)); } catch (...) {}
+        try { return Value(parseLongLongStrict(token, "SET", "integer literal")); } catch (...) {}
     }
     if (isFloat(token)) {
-        try { return Value(std::stod(token)); } catch (...) {}
+        try { return Value(parseDoubleStrict(token, "SET", "float literal")); } catch (...) {}
     }
 
     return Value(token);
@@ -355,7 +449,7 @@ Value resolveOperand(const std::string& arg, Tape& tape) {
     if (arg.size() > 1 && arg[0] == '@') {
         std::string rest = arg.substr(1);
         if (isInteger(rest))
-            return tape.cells[std::stoll(rest)];
+            return tape.cells[parseLongLongStrict(rest, "cell reference", "cell index")];
     }
     return parseValue(arg);
 }
@@ -372,8 +466,8 @@ long long integerValue(const Value& value, const std::string& opcode, const std:
             return static_cast<long long>(std::get<char>(value.data));
         case ValueKind::Str: {
             const auto& s = std::get<std::string>(value.data);
-            if (isInteger(s)) return std::stoll(s);
-            if (isFloat(s))   return static_cast<long long>(std::stod(s));
+            if (isInteger(s)) return parseLongLongStrict(s, opcode, role);
+            if (isFloat(s))   return static_cast<long long>(parseDoubleStrict(s, opcode, role));
             break;
         }
         default:
@@ -384,6 +478,50 @@ long long integerValue(const Value& value, const std::string& opcode, const std:
 
 long long integerOperand(const std::string& arg, Tape& tape, const std::string& opcode, const std::string& role) {
     return integerValue(resolveOperand(arg, tape), opcode, role);
+}
+
+int intOperand(const std::string& arg, Tape& tape, const std::string& opcode, const std::string& role) {
+    long long value = integerOperand(arg, tape, opcode, role);
+    if (value < std::numeric_limits<int>::min() || value > std::numeric_limits<int>::max())
+        throw std::runtime_error(opcode + ": " + role + " is out of int range");
+    return static_cast<int>(value);
+}
+
+size_t sizeOperand(const std::string& arg, Tape& tape, const std::string& opcode, const std::string& role) {
+    long long value = integerOperand(arg, tape, opcode, role);
+    if (value < 0)
+        throw std::runtime_error(opcode + ": " + role + " must be non-negative");
+    return static_cast<size_t>(value);
+}
+
+double doubleValue(const Value& value, const std::string& opcode, const std::string& role) {
+    switch (value.kind()) {
+        case ValueKind::Int:
+            return static_cast<double>(std::get<long long>(value.data));
+        case ValueKind::Float:
+            return std::get<double>(value.data);
+        case ValueKind::Bool:
+            return std::get<bool>(value.data) ? 1.0 : 0.0;
+        case ValueKind::Char:
+            return static_cast<double>(std::get<char>(value.data));
+        case ValueKind::Str: {
+            const auto& s = std::get<std::string>(value.data);
+            if (isInteger(s) || isFloat(s))
+                return parseDoubleStrict(s, opcode, role);
+            break;
+        }
+        default:
+            break;
+    }
+    throw std::runtime_error(opcode + ": " + role + " must be numeric");
+}
+
+double doubleOperand(const std::string& arg, Tape& tape, const std::string& opcode, const std::string& role) {
+    return doubleValue(resolveOperand(arg, tape), opcode, role);
+}
+
+std::string stringOperand(const std::string& arg, Tape& tape) {
+    return stringifyValue(resolveOperand(arg, tape));
 }
 
 int checkedTapeIndex(long long raw, size_t tapeCount, const std::string& opcode) {
@@ -413,8 +551,7 @@ double numericValue(const Value& v) {
         case ValueKind::Char:  return static_cast<double>(std::get<char>(v.data));
         case ValueKind::Str: {
             const auto& s = std::get<std::string>(v.data);
-            if (isInteger(s)) return static_cast<double>(std::stoll(s));
-            if (isFloat(s))   return std::stod(s);
+            if (isInteger(s) || isFloat(s)) return parseDoubleStrict(s, "numeric coercion", "string value");
             return 0.0;
         }
         default: return 0.0;
@@ -558,6 +695,55 @@ std::string compactDisplayValue(const Value& value, size_t maxWidth = 14) {
     if (maxWidth <= 3)
         return out.substr(0, maxWidth);
     return out.substr(0, maxWidth - 3) + "...";
+}
+
+bool ansiEnabled() {
+    static bool enabled = [] {
+        const char* term = std::getenv("TERM");
+        return isatty(STDOUT_FILENO)
+            && std::getenv("NO_COLOR") == nullptr
+            && (!term || std::string(term) != "dumb");
+    }();
+    return enabled;
+}
+
+std::string ansiWrap(const std::string& text, const std::string& code) {
+    if (!ansiEnabled() || text.empty()) return text;
+    return "\033[" + code + "m" + text + "\033[0m";
+}
+
+std::string valueColor(ValueKind kind) {
+    switch (kind) {
+        case ValueKind::Nil:   return "90";
+        case ValueKind::Bool:  return "35";
+        case ValueKind::Int:   return "36";
+        case ValueKind::Float: return "36";
+        case ValueKind::Char:  return "32";
+        case ValueKind::Str:   return "32";
+        case ValueKind::List:  return "33";
+        case ValueKind::Map:   return "33";
+        case ValueKind::Code:  return "34";
+    }
+    return "0";
+}
+
+std::string colorValue(const Value& value, const std::string& text) {
+    return ansiWrap(text, valueColor(value.kind()));
+}
+
+std::string colorHead(const std::string& text) {
+    return ansiWrap(text, "1;31");
+}
+
+std::string colorMeta(const std::string& text) {
+    return ansiWrap(text, "90");
+}
+
+std::string formatInstruction(const Instruction& ins) {
+    std::string out = ins.opcode;
+    for (const auto& arg : ins.args)
+        out += " " + arg;
+    return out;
 }
 
 // ---- Optional PostgreSQL/libpq bridge --------------------------------------
@@ -830,6 +1016,372 @@ std::string buildUpdateSql(PgApi& api, void* conn, const std::string& table, con
            " SET " + assignments + " WHERE " + where;
 }
 
+long long pgCommandRows(PgApi& api, void* conn, const std::string& sql, const std::string& opcode) {
+    PgApi::PGresult* result = api.PQexec(static_cast<PgApi::PGconn*>(conn), sql.c_str());
+    if (!result)
+        throw std::runtime_error(opcode + ": " + pgError(api, conn));
+
+    int status = api.PQresultStatus(result);
+    if (status != 1) { // PGRES_COMMAND_OK
+        std::string error = pgError(api, conn);
+        api.PQclear(result);
+        throw std::runtime_error(opcode + ": " + error);
+    }
+
+    char* rawRows = api.PQcmdTuples(result);
+    long long rows = 0;
+    if (rawRows && *rawRows) {
+        try { rows = std::stoll(rawRows); } catch (...) { rows = 0; }
+    }
+    api.PQclear(result);
+    return rows;
+}
+
+std::string sqlNull() {
+    return "NULL";
+}
+
+std::string sqlFloatLiteral(double value) {
+    if (!std::isfinite(value))
+        throw std::runtime_error("DB_TAPE_INPUT: float values must be finite");
+    std::ostringstream out;
+    out << std::setprecision(17) << value;
+    return out.str();
+}
+
+std::string sqlTextOrNull(PgApi& api, void* conn, const std::string& value) {
+    return pgQuoteLiteral(api, conn, value);
+}
+
+struct TapeCellSql {
+    std::string kind;
+    std::string boolValue = sqlNull();
+    std::string intValue = sqlNull();
+    std::string floatValue = sqlNull();
+    std::string charValue = sqlNull();
+    std::string textValue = sqlNull();
+    std::string codeText = sqlNull();
+};
+
+std::string pgColumnText(PgApi& api, PgApi::PGresult* result, int row, int col);
+
+TapeCellSql tapeCellSql(PgApi& api, void* conn, const Value& value, const std::string& opcode) {
+    TapeCellSql out;
+    out.kind = pgQuoteLiteral(api, conn, kindName(value.kind()));
+
+    switch (value.kind()) {
+        case ValueKind::Nil:
+            break;
+        case ValueKind::Bool:
+            out.boolValue = std::get<bool>(value.data) ? "TRUE" : "FALSE";
+            break;
+        case ValueKind::Int:
+            out.intValue = std::to_string(std::get<long long>(value.data));
+            break;
+        case ValueKind::Float:
+            out.floatValue = sqlFloatLiteral(std::get<double>(value.data));
+            break;
+        case ValueKind::Char:
+            out.charValue = sqlTextOrNull(api, conn, std::string(1, std::get<char>(value.data)));
+            break;
+        case ValueKind::Str:
+            out.textValue = sqlTextOrNull(api, conn, std::get<std::string>(value.data));
+            break;
+        case ValueKind::Code:
+            out.codeText = sqlTextOrNull(api, conn, stringifyValue(value));
+            break;
+        case ValueKind::List:
+        case ValueKind::Map:
+            throw std::runtime_error(opcode + ": list/map cells are not stored as JSON; encode nested data across tape cells");
+    }
+
+    return out;
+}
+
+std::string buildTapeCellUpsertSql(
+    PgApi& api,
+    void* conn,
+    const std::string& spaceKey,
+    long long tapeIndex,
+    long long cellIndex,
+    const Value& value,
+    const std::string& opcode
+) {
+    if (tapeIndex < 0)
+        throw std::runtime_error(opcode + ": tape index must be non-negative");
+    TapeCellSql cell = tapeCellSql(api, conn, value, opcode);
+
+    return "INSERT INTO tape_cells "
+           "(space_key, tape_index, cell_index, value_kind, bool_value, int_value, float_value, char_value, text_value, code_text, updated_at) VALUES (" +
+           pgQuoteLiteral(api, conn, spaceKey) + ", " +
+           std::to_string(tapeIndex) + ", " +
+           std::to_string(cellIndex) + ", " +
+           cell.kind + ", " +
+           cell.boolValue + ", " +
+           cell.intValue + ", " +
+           cell.floatValue + ", " +
+           cell.charValue + ", " +
+           cell.textValue + ", " +
+           cell.codeText + ", now()) "
+           "ON CONFLICT (space_key, tape_index, cell_index) DO UPDATE SET "
+           "value_kind = EXCLUDED.value_kind, "
+           "bool_value = EXCLUDED.bool_value, "
+           "int_value = EXCLUDED.int_value, "
+           "float_value = EXCLUDED.float_value, "
+           "char_value = EXCLUDED.char_value, "
+           "text_value = EXCLUDED.text_value, "
+           "code_text = EXCLUDED.code_text, "
+           "updated_at = now()";
+}
+
+std::string tapeCellValueWhereSql(
+    PgApi& api,
+    void* conn,
+    const Value& value,
+    const std::string& opcode
+) {
+    switch (value.kind()) {
+        case ValueKind::Nil:
+            return "value_kind = 'nil'";
+        case ValueKind::Bool:
+            return std::string("value_kind = 'bool' AND bool_value IS ") +
+                   (std::get<bool>(value.data) ? "TRUE" : "FALSE");
+        case ValueKind::Int:
+            return "value_kind = 'int' AND int_value = " + std::to_string(std::get<long long>(value.data));
+        case ValueKind::Float:
+            return "value_kind = 'float' AND float_value = " + sqlFloatLiteral(std::get<double>(value.data));
+        case ValueKind::Char:
+            return "value_kind = 'char' AND char_value = " +
+                   pgQuoteLiteral(api, conn, std::string(1, std::get<char>(value.data)));
+        case ValueKind::Str:
+            return "value_kind = 'str' AND text_value = " +
+                   pgQuoteLiteral(api, conn, std::get<std::string>(value.data));
+        case ValueKind::Code:
+            return "value_kind = 'code' AND code_text = " +
+                   pgQuoteLiteral(api, conn, stringifyValue(value));
+        case ValueKind::List:
+        case ValueKind::Map:
+            throw std::runtime_error(opcode + ": list/map cells are not searchable in tape_cells");
+    }
+    return "FALSE";
+}
+
+Value pgFindTapeSpace(
+    PgApi& api,
+    void* conn,
+    long long tapeIndex,
+    long long cellIndex,
+    const Value& value,
+    const std::string& opcode
+) {
+    if (tapeIndex < 0)
+        throw std::runtime_error(opcode + ": tape index must be non-negative");
+
+    std::string sql =
+        "SELECT space_key FROM tape_cells WHERE tape_index = " +
+        std::to_string(tapeIndex) +
+        " AND cell_index = " +
+        std::to_string(cellIndex) +
+        " AND " +
+        tapeCellValueWhereSql(api, conn, value, opcode) +
+        " ORDER BY updated_at DESC LIMIT 1";
+
+    PgApi::PGresult* result = api.PQexec(static_cast<PgApi::PGconn*>(conn), sql.c_str());
+    if (!result)
+        throw std::runtime_error(opcode + ": " + pgError(api, conn));
+
+    int status = api.PQresultStatus(result);
+    if (status != 2) {
+        std::string error = pgError(api, conn);
+        api.PQclear(result);
+        throw std::runtime_error(opcode + ": " + error);
+    }
+
+    Value out;
+    if (api.PQntuples(result) > 0)
+        out = Value(pgColumnText(api, result, 0, 0));
+    api.PQclear(result);
+    return out;
+}
+
+void pgOpenTapeSpace(PgApi& api, void* conn, const std::string& spaceKey, const std::string& kind, const std::string& opcode) {
+    std::string sql =
+        "INSERT INTO tape_spaces (space_key, kind, updated_at) VALUES (" +
+        pgQuoteLiteral(api, conn, spaceKey) + ", " +
+        pgQuoteLiteral(api, conn, kind) + ", now()) "
+        "ON CONFLICT (space_key) DO UPDATE SET kind = EXCLUDED.kind, updated_at = now()";
+    pgCommandRows(api, conn, sql, opcode);
+}
+
+void pgEnsureTapeSpace(PgApi& api, void* conn, const std::string& spaceKey, const std::string& opcode) {
+    std::string sql =
+        "INSERT INTO tape_spaces (space_key, kind, updated_at) VALUES (" +
+        pgQuoteLiteral(api, conn, spaceKey) + ", 'memory', now()) "
+        "ON CONFLICT (space_key) DO NOTHING";
+    pgCommandRows(api, conn, sql, opcode);
+}
+
+void pgStoreTapeCell(
+    PgApi& api,
+    void* conn,
+    const std::string& spaceKey,
+    long long tapeIndex,
+    long long cellIndex,
+    const Value& value,
+    const std::string& opcode
+) {
+    pgEnsureTapeSpace(api, conn, spaceKey, opcode);
+    pgCommandRows(api, conn, buildTapeCellUpsertSql(api, conn, spaceKey, tapeIndex, cellIndex, value, opcode), opcode);
+}
+
+std::string pgColumnText(PgApi& api, PgApi::PGresult* result, int row, int col) {
+    if (api.PQgetisnull(result, row, col))
+        return "";
+    char* raw = api.PQgetvalue(result, row, col);
+    return raw ? std::string(raw) : "";
+}
+
+Value pgTapeCellValue(PgApi& api, PgApi::PGresult* result, int row) {
+    std::string kind = pgColumnText(api, result, row, 0);
+
+    if (kind == "nil") return Value();
+    if (kind == "bool") {
+        std::string raw = pgColumnText(api, result, row, 1);
+        return Value(raw == "t" || raw == "true" || raw == "1");
+    }
+    if (kind == "int") {
+        std::string raw = pgColumnText(api, result, row, 2);
+        return raw.empty() ? Value(0LL) : Value(parseLongLongStrict(raw, "DB_TAPE_OUTPUT", "stored int_value"));
+    }
+    if (kind == "float") {
+        std::string raw = pgColumnText(api, result, row, 3);
+        return raw.empty() ? Value(0.0) : Value(parseDoubleStrict(raw, "DB_TAPE_OUTPUT", "stored float_value"));
+    }
+    if (kind == "char") {
+        std::string raw = pgColumnText(api, result, row, 4);
+        return raw.empty() ? Value('\0') : Value(raw[0]);
+    }
+    if (kind == "str") {
+        return Value(pgColumnText(api, result, row, 5));
+    }
+    if (kind == "code") {
+        std::string raw = pgColumnText(api, result, row, 6);
+        return parseValue(raw);
+    }
+
+    throw std::runtime_error("DB_TAPE_OUTPUT: unknown stored value_kind: " + kind);
+}
+
+bool pgFetchTapeCell(
+    PgApi& api,
+    void* conn,
+    const std::string& spaceKey,
+    long long tapeIndex,
+    long long cellIndex,
+    Value& out,
+    const std::string& opcode
+) {
+    std::string sql =
+        "SELECT value_kind, bool_value::text, int_value::text, float_value::text, char_value, text_value, code_text "
+        "FROM tape_cells WHERE space_key = " + pgQuoteLiteral(api, conn, spaceKey) +
+        " AND tape_index = " + std::to_string(tapeIndex) +
+        " AND cell_index = " + std::to_string(cellIndex) +
+        " LIMIT 1";
+
+    PgApi::PGresult* result = api.PQexec(static_cast<PgApi::PGconn*>(conn), sql.c_str());
+    if (!result)
+        throw std::runtime_error(opcode + ": " + pgError(api, conn));
+
+    int status = api.PQresultStatus(result);
+    if (status != 2) { // PGRES_TUPLES_OK
+        std::string error = pgError(api, conn);
+        api.PQclear(result);
+        throw std::runtime_error(opcode + ": " + error);
+    }
+
+    bool found = api.PQntuples(result) > 0;
+    if (found)
+        out = pgTapeCellValue(api, result, 0);
+    api.PQclear(result);
+    return found;
+}
+
+long long pgLoadTapeCells(
+    PgApi& api,
+    void* conn,
+    const std::string& spaceKey,
+    const std::string& tapeSelector,
+    std::vector<Tape>& tapes,
+    const std::function<int(long long, const std::string&)>& ensureTape,
+    const std::string& opcode
+) {
+    std::string sql =
+        "SELECT value_kind, bool_value::text, int_value::text, float_value::text, char_value, text_value, code_text, tape_index::text, cell_index::text "
+        "FROM tape_cells WHERE space_key = " + pgQuoteLiteral(api, conn, spaceKey);
+    if (tapeSelector != "*")
+        sql += " AND tape_index = " + tapeSelector;
+    sql += " ORDER BY tape_index, cell_index";
+
+    PgApi::PGresult* result = api.PQexec(static_cast<PgApi::PGconn*>(conn), sql.c_str());
+    if (!result)
+        throw std::runtime_error(opcode + ": " + pgError(api, conn));
+
+    int status = api.PQresultStatus(result);
+    if (status != 2) {
+        std::string error = pgError(api, conn);
+        api.PQclear(result);
+        throw std::runtime_error(opcode + ": " + error);
+    }
+
+    int rowCount = api.PQntuples(result);
+    for (int row = 0; row < rowCount; ++row) {
+        long long tapeIndex = parseLongLongStrict(pgColumnText(api, result, row, 7), opcode, "stored tape_index");
+        long long cellIndex = parseLongLongStrict(pgColumnText(api, result, row, 8), opcode, "stored cell_index");
+        int tapeSlot = ensureTape(tapeIndex, opcode);
+        tapes[tapeSlot].cells[cellIndex] = pgTapeCellValue(api, result, row);
+    }
+
+    api.PQclear(result);
+    return static_cast<long long>(rowCount);
+}
+
+long long pgInsertTapeEvent(
+    PgApi& api,
+    void* conn,
+    const std::string& spaceKey,
+    const std::string& eventType,
+    long long tapeIndex,
+    long long cellIndex,
+    const std::string& opcodeName,
+    const std::string& note,
+    const std::string& opcode
+) {
+    pgEnsureTapeSpace(api, conn, spaceKey, opcode);
+    std::string sql =
+        "INSERT INTO tape_events (space_key, event_type, tape_index, cell_index, opcode, note) VALUES (" +
+        pgQuoteLiteral(api, conn, spaceKey) + ", " +
+        pgQuoteLiteral(api, conn, eventType) + ", " +
+        std::to_string(tapeIndex) + ", " +
+        std::to_string(cellIndex) + ", " +
+        pgQuoteLiteral(api, conn, opcodeName) + ", " +
+        pgQuoteLiteral(api, conn, note) + ") RETURNING id::text";
+
+    PgApi::PGresult* result = api.PQexec(static_cast<PgApi::PGconn*>(conn), sql.c_str());
+    if (!result)
+        throw std::runtime_error(opcode + ": " + pgError(api, conn));
+
+    int status = api.PQresultStatus(result);
+    if (status != 2 || api.PQntuples(result) < 1) {
+        std::string error = pgError(api, conn);
+        api.PQclear(result);
+        throw std::runtime_error(opcode + ": " + error);
+    }
+
+    long long id = parseLongLongStrict(pgColumnText(api, result, 0, 0), opcode, "returned event id");
+    api.PQclear(result);
+    return id;
+}
+
 // ---- Equality (strict type-and-value match) --------------------------------
 
 bool valuesEqual(const Value& a, const Value& b) {
@@ -948,7 +1500,7 @@ List eigenVectorToList(const Eigen::VectorXd& v) {
 // ---------------------------------------------------------------------------
 
 VM::VM(const std::string& file, int tapeCount, bool debug, bool step)
-    : tapes(tapeCount), debugMode(debug), stepMode(step), loader(file)
+    : tapes(std::max(1, tapeCount)), debugMode(debug), stepMode(step), loader(file)
 {}
 
 VM::~VM() {
@@ -960,13 +1512,36 @@ VM::~VM() {
     }
 }
 
+int VM::ensureTapeIndex(long long index, const std::string& opcode) {
+    if (index < 0)
+        throw std::runtime_error(opcode + ": tape index must be non-negative: " + std::to_string(index));
+    if (index > static_cast<long long>(std::numeric_limits<int>::max()))
+        throw std::runtime_error(opcode + ": tape index is too large: " + std::to_string(index));
+    size_t target = static_cast<size_t>(index);
+    if (target >= tapes.size())
+        tapes.resize(target + 1);
+    return static_cast<int>(target);
+}
+
 void VM::debug(const Instruction& ins) {
     if (!debugMode) return;
 
-    std::cout << "\n[DEBUG] OP=" << ins.opcode
-              << "  TAPE=" << activeTape
-              << "  PTR=" << tapes[activeTape].ptr
-              << "  LEN=" << tapes[activeTape].length() << "\n";
+    const Tape& tape = tapes[activeTape];
+    const Value empty;
+    auto currentIt = tape.cells.find(tape.ptr);
+    const Value& current = currentIt == tape.cells.end() ? empty : currentIt->second;
+    std::cout << "\n"
+              << ansiWrap("[debug]", "1;34")
+              << " tape" << activeTape
+              << "@" << tape.ptr
+              << " cells=" << tape.length()
+              << " :: " << formatInstruction(ins)
+              << "\n"
+              << colorMeta("        current ")
+              << kindName(current.kind())
+              << colorMeta(" = ")
+              << colorValue(current, compactDisplayValue(current, 80))
+              << "\n";
 
     if (stepMode) {
         std::cout << "Press Enter to step...";
@@ -983,7 +1558,6 @@ void VM::debug(const Instruction& ins) {
 
 std::string VM::tapeSnapshot(int radius, int tapeIndex) const {
     const int windowRadius = std::max(1, radius);
-    const size_t cellWidth = 12;
     const size_t maxOffscreenCells = 6;
 
     int shownTape = tapeIndex < 0 ? activeTape : tapeIndex;
@@ -991,7 +1565,9 @@ std::string VM::tapeSnapshot(int radius, int tapeIndex) const {
         throw std::runtime_error("PRINT_TAPE index out of bounds: " + std::to_string(shownTape));
 
     std::ostringstream out;
-    out << "\nTAPE active=tape" << activeTape
+    out << "\n"
+        << ansiWrap("TAPE", "1;34")
+        << " active=tape" << activeTape
         << " showing=tape" << shownTape
         << " count=" << tapes.size() << "\n";
 
@@ -1001,35 +1577,37 @@ std::string VM::tapeSnapshot(int radius, int tapeIndex) const {
         start = 0;
     const long long end = start + (windowRadius * 2);
 
-    out << (shownTape == activeTape ? "=> " : "   ")
+    out << (shownTape == activeTape ? colorHead("=> ") : "   ")
         << "tape" << shownTape
-        << " ptr=" << tape.ptr
+        << " ptr=" << colorHead(std::to_string(tape.ptr))
         << " cells=" << tape.length();
 
     if (tape.cells.empty()) {
-        out << " empty";
+        out << " " << colorMeta("empty");
     }
     out << "\n";
 
-    out << "      idx ";
-    for (long long pos = start; pos <= end; ++pos)
-        out << fitColumn(std::to_string(pos), cellWidth);
-    out << "\n";
-
-    out << "      val ";
+    out << "   |-- window " << start << ".." << end << "\n";
+    out << "   |-- cells\n";
     for (long long pos = start; pos <= end; ++pos) {
         auto it = tape.cells.find(pos);
-        std::string cell = it == tape.cells.end()
-            ? "."
-            : compactDisplayValue(it->second, cellWidth - 2);
-        out << fitColumn(cell, cellWidth);
-    }
-    out << "\n";
+        bool isHead = pos == tape.ptr;
+        out << "   |   "
+            << (pos == end ? "`-- " : "|-- ")
+            << "[" << pos << "] ";
+        if (isHead)
+            out << colorHead("<HEAD> ");
+        else
+            out << colorMeta("       ");
 
-    out << "      head";
-    for (long long pos = start; pos <= end; ++pos)
-        out << fitColumn(pos == tape.ptr ? "^" : "", cellWidth);
-    out << "\n";
+        if (it == tape.cells.end()) {
+            out << colorMeta(".");
+        } else {
+            out << colorMeta(std::string(kindName(it->second.kind())) + " ")
+                << colorValue(it->second, compactDisplayValue(it->second, 56));
+        }
+        out << "\n";
+    }
 
     std::vector<long long> offscreen;
     for (const auto& [pos, _] : tape.cells) {
@@ -1039,21 +1617,56 @@ std::string VM::tapeSnapshot(int radius, int tapeIndex) const {
     std::sort(offscreen.begin(), offscreen.end());
 
     if (!offscreen.empty()) {
-        out << "      off-window ";
+        out << "   `-- off-window ";
         size_t shown = std::min(maxOffscreenCells, offscreen.size());
         for (size_t i = 0; i < shown; ++i) {
             long long pos = offscreen[i];
+            const Value& value = tape.cells.at(pos);
             out << "[" << pos << ":"
-                << compactDisplayValue(tape.cells.at(pos), 18) << "]";
+                << colorValue(value, compactDisplayValue(value, 18)) << "]";
             if (i + 1 < shown)
                 out << " ";
         }
         if (offscreen.size() > shown)
             out << " ... +" << (offscreen.size() - shown) << " more";
         out << "\n";
+    } else {
+        out << "   `-- off-window " << colorMeta("empty") << "\n";
     }
 
     return out.str();
+}
+
+std::string VM::cellSnapshot(long long cellIndex, int tapeIndex) const {
+    int shownTape = tapeIndex < 0 ? activeTape : tapeIndex;
+    if (shownTape < 0 || shownTape >= static_cast<int>(tapes.size()))
+        throw std::runtime_error("CELL index out of bounds: tape" + std::to_string(shownTape));
+
+    const Tape& tape = tapes[shownTape];
+    auto it = tape.cells.find(cellIndex);
+    std::ostringstream out;
+    out << "\n"
+        << ansiWrap("CELL", "1;34")
+        << " tape" << shownTape << "[" << cellIndex << "]";
+    if (shownTape == activeTape && cellIndex == tape.ptr)
+        out << " " << colorHead("<HEAD>");
+    out << "\n";
+
+    if (it == tape.cells.end()) {
+        out << "   `-- " << colorMeta("nil / empty cell") << "\n";
+        return out.str();
+    }
+
+    out << "   |-- type " << kindName(it->second.kind()) << "\n"
+        << "   `-- value " << colorValue(it->second, stringifyValue(it->second)) << "\n";
+    return out.str();
+}
+
+long long VM::tapePointer(int tapeIndex) const {
+    int shownTape = tapeIndex < 0 ? activeTape : tapeIndex;
+    if (shownTape < 0 || shownTape >= static_cast<int>(tapes.size()))
+        throw std::runtime_error("tape index out of bounds: " + std::to_string(shownTape));
+    return tapes[shownTape].ptr;
 }
 
 // ---------------------------------------------------------------------------
@@ -1071,19 +1684,19 @@ void VM::execute(const Instruction& ins) {
         if (ins.args.empty())
              tape.moveForward(static_cast<long long>(1));
         else
-        tape.moveForward(std::stoll(argOrThrow(ins, 0)));
+        tape.moveForward(integerOperand(argOrThrow(ins, 0), tape, ins.opcode, "distance"));
     }
     else if (ins.opcode == "BACK") {
         if (ins.args.empty())
              tape.moveBackward(static_cast<long long>(1));
         else
-        tape.moveBackward(std::stoll(argOrThrow(ins, 0)));
+        tape.moveBackward(integerOperand(argOrThrow(ins, 0), tape, ins.opcode, "distance"));
     }
 
     // ---- Core cell ops ----------------------------------------------------
 
     else if (ins.opcode == "SET") {
-        tape.current() = parseValue(argOrThrow(ins, 0));
+        tape.current() = resolveOperand(argOrThrow(ins, 0), tape);
     }
     else if (ins.opcode == "PRINT") {
         std::cout << stringifyValue(tape.current()) << "\n";
@@ -1098,7 +1711,7 @@ void VM::execute(const Instruction& ins) {
         tape.current() = Value(std::string(kindName(tape.current().kind())));
     }
     else if (ins.opcode == "CAST") {
-        std::string target = argOrThrow(ins, 0);
+        std::string target = stringOperand(argOrThrow(ins, 0), tape);
         std::transform(target.begin(), target.end(), target.begin(),
                        [](unsigned char c) { return std::tolower(c); });
         Value& cur = tape.current();
@@ -1146,58 +1759,70 @@ void VM::execute(const Instruction& ins) {
     // ---- Multi-tape ops ---------------------------------------------------
 
     else if (ins.opcode == "SEEK") {
-        tape.ptr = std::stoll(argOrThrow(ins, 0));
+        tape.ptr = integerOperand(argOrThrow(ins, 0), tape, ins.opcode, "cell index");
     }
     else if (ins.opcode == "HOME") {
         tape.ptr = 0;
     }
 
     else if (ins.opcode == "TAPE") {
-        int target = std::stoi(argOrThrow(ins, 0));
-        if (target < 0 || target >= static_cast<int>(tapes.size()))
-            throw std::runtime_error("TAPE index out of bounds: " + std::to_string(target));
+        int target = ensureTapeIndex(integerOperand(argOrThrow(ins, 0), tape, ins.opcode, "tape index"), ins.opcode);
         activeTape = target;
     }
     else if (ins.opcode == "PRINT_TAPE") {
-        int target = std::stoi(argOrThrow(ins, 0));
+        int target = ensureTapeIndex(integerOperand(argOrThrow(ins, 0), tape, ins.opcode, "tape index"), ins.opcode);
         std::cout << tapeSnapshot(3, target);
     }
     else if (ins.opcode == "LEN" || ins.opcode == "LENGTH") {
         tape.current() = Value(static_cast<long long>(tape.length()));
     }
     else if (ins.opcode == "CMP" || ins.opcode == "COMPARE") {
-        int other = std::stoi(argOrThrow(ins, 0));
-        if (other < 0 || other >= static_cast<int>(tapes.size()))
-            throw std::runtime_error("CMP tape index out of bounds: " + std::to_string(other));
-        tape.current() = Value(valuesEqual(tape.current(), tapes[other].current()));
+        int other = ensureTapeIndex(integerOperand(argOrThrow(ins, 0), tape, ins.opcode, "tape index"), ins.opcode);
+        tapes[activeTape].current() = Value(valuesEqual(tapes[activeTape].current(), tapes[other].current()));
     }
     else if (ins.opcode == "COPY") {
         // Copy current cell to the same ptr position on dest tape
-        int dest = std::stoi(argOrThrow(ins, 0));
-        if (dest < 0 || dest >= static_cast<int>(tapes.size()))
-            throw std::runtime_error("COPY tape index out of bounds: " + std::to_string(dest));
-        tapes[dest].cells[tapes[dest].ptr] = tape.current();
+        long long destRaw = integerOperand(argOrThrow(ins, 0), tape, ins.opcode, "destination tape index");
+        Value value = tape.current();
+        int dest = ensureTapeIndex(destRaw, ins.opcode);
+        tapes[dest].cells[tapes[dest].ptr] = value;
     }
     else if (ins.opcode == "TAPEREAD" || ins.opcode == "TGET" || ins.opcode == "PEEK") {
-        int src = tapeIndexArg(ins, 0, tape, tapes.size());
-        long long srcCell = cellIndexArgOrPtr(ins, 1, tape, tapes[src]);
-        tape.current() = tapes[src].cells[srcCell];
+        long long srcRaw = integerOperand(argOrThrow(ins, 0), tape, ins.opcode, "tape index");
+        bool hasCell = ins.args.size() > 1;
+        long long srcCell = hasCell ? integerOperand(argOrThrow(ins, 1), tape, ins.opcode, "cell index") : 0;
+        int src = ensureTapeIndex(srcRaw, ins.opcode);
+        if (!hasCell)
+            srcCell = tapes[src].ptr;
+        tapes[activeTape].current() = tapes[src].cells[srcCell];
     }
     else if (ins.opcode == "TAPEWRITE" || ins.opcode == "TPUT" || ins.opcode == "POKE") {
-        int dest = tapeIndexArg(ins, 0, tape, tapes.size());
-        long long destCell = cellIndexArgOrPtr(ins, 1, tape, tapes[dest]);
         Value value = ins.args.size() > 2 ? resolveOperand(argOrThrow(ins, 2), tape) : tape.current();
+        long long destRaw = integerOperand(argOrThrow(ins, 0), tape, ins.opcode, "tape index");
+        bool hasCell = ins.args.size() > 1;
+        long long destCell = hasCell ? integerOperand(argOrThrow(ins, 1), tape, ins.opcode, "cell index") : 0;
+        int dest = ensureTapeIndex(destRaw, ins.opcode);
+        if (!hasCell)
+            destCell = tapes[dest].ptr;
         tapes[dest].cells[destCell] = value;
     }
     else if (ins.opcode == "TAPESWAP" || ins.opcode == "TSWAP") {
-        int other = tapeIndexArg(ins, 0, tape, tapes.size());
-        long long otherCell = cellIndexArgOrPtr(ins, 1, tape, tapes[other]);
-        std::swap(tape.current(), tapes[other].cells[otherCell]);
+        long long otherRaw = integerOperand(argOrThrow(ins, 0), tape, ins.opcode, "tape index");
+        bool hasCell = ins.args.size() > 1;
+        long long otherCell = hasCell ? integerOperand(argOrThrow(ins, 1), tape, ins.opcode, "cell index") : 0;
+        int other = ensureTapeIndex(otherRaw, ins.opcode);
+        if (!hasCell)
+            otherCell = tapes[other].ptr;
+        std::swap(tapes[activeTape].current(), tapes[other].cells[otherCell]);
     }
     else if (ins.opcode == "TAPESEND" || ins.opcode == "TSEND" || ins.opcode == "SEND") {
-        int dest = tapeIndexArg(ins, 0, tape, tapes.size());
-        long long channel = cellIndexArgOrPtr(ins, 1, tape, tapes[dest]);
         Value value = ins.args.size() > 2 ? resolveOperand(argOrThrow(ins, 2), tape) : tape.current();
+        long long destRaw = integerOperand(argOrThrow(ins, 0), tape, ins.opcode, "tape index");
+        bool hasChannel = ins.args.size() > 1;
+        long long channel = hasChannel ? integerOperand(argOrThrow(ins, 1), tape, ins.opcode, "cell index") : 0;
+        int dest = ensureTapeIndex(destRaw, ins.opcode);
+        if (!hasChannel)
+            channel = tapes[dest].ptr;
         Value& inbox = tapes[dest].cells[channel];
         if (inbox.kind() == ValueKind::Nil)
             inbox = Value(List{});
@@ -1206,19 +1831,23 @@ void VM::execute(const Instruction& ins) {
         std::get<List>(inbox.data).push_back(value);
     }
     else if (ins.opcode == "TAPERECV" || ins.opcode == "TRECV" || ins.opcode == "RECV") {
-        int src = tapeIndexArg(ins, 0, tape, tapes.size());
-        long long channel = cellIndexArgOrPtr(ins, 1, tape, tapes[src]);
+        long long srcRaw = integerOperand(argOrThrow(ins, 0), tape, ins.opcode, "tape index");
+        bool hasChannel = ins.args.size() > 1;
+        long long channel = hasChannel ? integerOperand(argOrThrow(ins, 1), tape, ins.opcode, "cell index") : 0;
+        int src = ensureTapeIndex(srcRaw, ins.opcode);
+        if (!hasChannel)
+            channel = tapes[src].ptr;
         Value& inbox = tapes[src].cells[channel];
         if (inbox.kind() == ValueKind::Nil) {
-            tape.current() = Value();
+            tapes[activeTape].current() = Value();
         } else if (inbox.kind() == ValueKind::List) {
             auto& queue = std::get<List>(inbox.data);
             if (queue.empty()) {
-                tape.current() = Value();
+                tapes[activeTape].current() = Value();
             } else {
                 Value message = queue.front();
                 queue.erase(queue.begin());
-                tape.current() = message;
+                tapes[activeTape].current() = message;
             }
         } else {
             throw std::runtime_error(ins.opcode + ": source cell must be a list or nil");
@@ -1456,6 +2085,122 @@ void VM::execute(const Instruction& ins) {
             : stringifyValue(resolveOperand(argOrThrow(ins, 0), tape));
         tape.current() = Value(pgQuoteIdentifier(api, dbConn, value));
     }
+    else if (ins.opcode == "DB_TAPE_OPEN" || ins.opcode == "DBTAPEOPEN") {
+        requireDbConnected(dbConn);
+        PgApi& api = requirePgApi();
+        std::string spaceKey = stringifyValue(resolveOperand(argOrThrow(ins, 0), tape));
+        std::string kind = ins.args.size() > 1
+            ? stringifyValue(resolveOperand(argOrThrow(ins, 1), tape))
+            : "memory";
+        pgOpenTapeSpace(api, dbConn, spaceKey, kind, ins.opcode);
+        tapes[activeTape].current() = Value(spaceKey);
+    }
+    else if (ins.opcode == "DB_TAPE_INPUT" || ins.opcode == "DB_TAPE_PUT" || ins.opcode == "DBTAPEPUT") {
+        requireDbConnected(dbConn);
+        PgApi& api = requirePgApi();
+        std::string spaceKey = stringifyValue(resolveOperand(argOrThrow(ins, 0), tape));
+        long long tapeIndex = activeTape;
+        long long cellIndex = tape.ptr;
+        if (ins.args.size() > 1)
+            tapeIndex = integerOperand(argOrThrow(ins, 1), tape, ins.opcode, "tape index");
+        if (ins.args.size() > 2)
+            cellIndex = integerOperand(argOrThrow(ins, 2), tape, ins.opcode, "cell index");
+        Value value = ins.args.size() > 3 ? resolveOperand(argOrThrow(ins, 3), tape) : tape.current();
+        int tapeSlot = ensureTapeIndex(tapeIndex, ins.opcode);
+        tapes[tapeSlot].cells[cellIndex] = value;
+        pgStoreTapeCell(api, dbConn, spaceKey, tapeIndex, cellIndex, value, ins.opcode);
+    }
+    else if (ins.opcode == "DB_TAPE_OUTPUT" || ins.opcode == "DB_TAPE_GET" || ins.opcode == "DBTAPEGET") {
+        requireDbConnected(dbConn);
+        PgApi& api = requirePgApi();
+        std::string spaceKey = stringifyValue(resolveOperand(argOrThrow(ins, 0), tape));
+        long long tapeIndex = activeTape;
+        if (ins.args.size() > 1)
+            tapeIndex = integerOperand(argOrThrow(ins, 1), tape, ins.opcode, "tape index");
+        int tapeSlot = ensureTapeIndex(tapeIndex, ins.opcode);
+        long long cellIndex = ins.args.size() > 2
+            ? integerOperand(argOrThrow(ins, 2), tapes[activeTape], ins.opcode, "cell index")
+            : tapes[tapeSlot].ptr;
+
+        Value loaded;
+        if (pgFetchTapeCell(api, dbConn, spaceKey, tapeIndex, cellIndex, loaded, ins.opcode))
+            tapes[activeTape].current() = loaded;
+        else
+            tapes[activeTape].current() = Value();
+    }
+    else if (ins.opcode == "DB_TAPE_FIND" || ins.opcode == "DBTAPEFIND") {
+        requireDbConnected(dbConn);
+        PgApi& api = requirePgApi();
+        long long tapeIndex = integerOperand(argOrThrow(ins, 0), tape, ins.opcode, "tape index");
+        long long cellIndex = integerOperand(argOrThrow(ins, 1), tape, ins.opcode, "cell index");
+        Value value = ins.args.size() > 2 ? resolveOperand(argOrThrow(ins, 2), tape) : tape.current();
+        tapes[activeTape].current() = pgFindTapeSpace(api, dbConn, tapeIndex, cellIndex, value, ins.opcode);
+    }
+    else if (ins.opcode == "DB_TAPE_SAVE" || ins.opcode == "DBTAPESAVE") {
+        requireDbConnected(dbConn);
+        PgApi& api = requirePgApi();
+        std::string spaceKey = stringifyValue(resolveOperand(argOrThrow(ins, 0), tape));
+        std::string selector = ins.args.size() > 1
+            ? stringifyValue(resolveOperand(argOrThrow(ins, 1), tape))
+            : std::to_string(activeTape);
+
+        long long saved = 0;
+        if (selector == "*") {
+            for (size_t tapeIndex = 0; tapeIndex < tapes.size(); ++tapeIndex) {
+                for (const auto& [cellIndex, value] : tapes[tapeIndex].cells) {
+                    pgStoreTapeCell(api, dbConn, spaceKey, static_cast<long long>(tapeIndex), cellIndex, value, ins.opcode);
+                    ++saved;
+                }
+            }
+        } else {
+            long long tapeIndex = integerValue(parseValue(selector), ins.opcode, "tape selector");
+            int tapeSlot = ensureTapeIndex(tapeIndex, ins.opcode);
+            for (const auto& [cellIndex, value] : tapes[tapeSlot].cells) {
+                pgStoreTapeCell(api, dbConn, spaceKey, tapeIndex, cellIndex, value, ins.opcode);
+                ++saved;
+            }
+        }
+        tapes[activeTape].current() = Value(saved);
+    }
+    else if (ins.opcode == "DB_TAPE_LOAD" || ins.opcode == "DBTAPELOAD") {
+        requireDbConnected(dbConn);
+        PgApi& api = requirePgApi();
+        std::string spaceKey = stringifyValue(resolveOperand(argOrThrow(ins, 0), tape));
+        std::string selector = ins.args.size() > 1
+            ? stringifyValue(resolveOperand(argOrThrow(ins, 1), tape))
+            : std::to_string(activeTape);
+        if (selector != "*") {
+            long long tapeIndex = integerValue(parseValue(selector), ins.opcode, "tape selector");
+            ensureTapeIndex(tapeIndex, ins.opcode);
+            selector = std::to_string(tapeIndex);
+        }
+        auto ensure = [this](long long index, const std::string& opcode) {
+            return ensureTapeIndex(index, opcode);
+        };
+        long long loaded = pgLoadTapeCells(api, dbConn, spaceKey, selector, tapes, ensure, ins.opcode);
+        tapes[activeTape].current() = Value(loaded);
+    }
+    else if (ins.opcode == "DB_TAPE_EVENT" || ins.opcode == "DBTAPEEVENT") {
+        requireDbConnected(dbConn);
+        PgApi& api = requirePgApi();
+        std::string spaceKey = stringifyValue(resolveOperand(argOrThrow(ins, 0), tape));
+        std::string eventType = stringifyValue(resolveOperand(argOrThrow(ins, 1), tape));
+        std::string note = ins.args.size() > 2
+            ? stringifyValue(resolveOperand(argOrThrow(ins, 2), tape))
+            : "";
+        long long id = pgInsertTapeEvent(
+            api,
+            dbConn,
+            spaceKey,
+            eventType,
+            activeTape,
+            tape.ptr,
+            ins.opcode,
+            note,
+            ins.opcode
+        );
+        tapes[activeTape].current() = Value(id);
+    }
 
     // ---- String operations ------------------------------------------------
 
@@ -1490,8 +2235,8 @@ void VM::execute(const Instruction& ins) {
         tape.current() = Value(std::move(out));
     }
     else if (ins.opcode == "SUBSTR") {
-        int start = std::stoi(argOrThrow(ins, 0));
-        int len   = std::stoi(argOrThrow(ins, 1));
+        int start = intOperand(argOrThrow(ins, 0), tape, ins.opcode, "start index");
+        int len   = intOperand(argOrThrow(ins, 1), tape, ins.opcode, "length");
         if (tape.current().kind() != ValueKind::Str)
             throw std::runtime_error("SUBSTR: current cell is not a string");
         tape.current() = Value(std::get<std::string>(tape.current().data).substr(start, len));
@@ -1543,7 +2288,7 @@ void VM::execute(const Instruction& ins) {
     else if (ins.opcode == "NLPLOAD") {
         std::string path = ins.args.empty()
             ? stringifyValue(tape.current())
-            : stringifyValue(parseValue(argOrThrow(ins, 0)));
+            : stringOperand(argOrThrow(ins, 0), tape);
         tape.current() = Value(nlp.loadModel(path));
     }
     else if (ins.opcode == "NLPTOKENS") {
@@ -1553,10 +2298,10 @@ void VM::execute(const Instruction& ins) {
         tape.current() = Value(nlp.analyze(stringifyValue(tape.current())));
     }
     else if (ins.opcode == "NLPSIM") {
-        long long otherCell = std::stoll(argOrThrow(ins, 0));
+        long long otherCell = integerOperand(argOrThrow(ins, 0), tape, ins.opcode, "other cell index");
         bool forceTokenMode = false;
         if (ins.args.size() > 1) {
-            std::string mode = toUpperStr(stringifyValue(parseValue(ins.args[1])));
+            std::string mode = toUpperStr(stringOperand(ins.args[1], tape));
             forceTokenMode = mode == "TOKEN" || mode == "TOKENS";
         }
         std::string left = stringifyValue(tape.current());
@@ -1564,19 +2309,19 @@ void VM::execute(const Instruction& ins) {
         tape.current() = Value(nlp.similarity(left, right, forceTokenMode));
     }
     else if (ins.opcode == "NLPDIFF") {
-        long long otherCell = std::stoll(argOrThrow(ins, 0));
+        long long otherCell = integerOperand(argOrThrow(ins, 0), tape, ins.opcode, "other cell index");
         std::string left = stringifyValue(tape.current());
         std::string right = stringifyValue(tape.cells[otherCell]);
         tape.current() = Value(nlp.diff(left, right));
     }
     else if (ins.opcode == "NLPPREDICT") {
-        int k = ins.args.size() > 0 ? std::stoi(ins.args[0]) : 1;
-        double threshold = ins.args.size() > 1 ? std::stod(ins.args[1]) : 0.0;
+        int k = ins.args.size() > 0 ? intOperand(ins.args[0], tape, ins.opcode, "result count") : 1;
+        double threshold = ins.args.size() > 1 ? doubleOperand(ins.args[1], tape, ins.opcode, "threshold") : 0.0;
         tape.current() = Value(nlp.predict(stringifyValue(tape.current()), k, threshold));
     }
     else if (ins.opcode == "NLPSENTIMENT") {
-        int k = ins.args.size() > 0 ? std::stoi(ins.args[0]) : 1;
-        double threshold = ins.args.size() > 1 ? std::stod(ins.args[1]) : 0.0;
+        int k = ins.args.size() > 0 ? intOperand(ins.args[0], tape, ins.opcode, "result count") : 1;
+        double threshold = ins.args.size() > 1 ? doubleOperand(ins.args[1], tape, ins.opcode, "threshold") : 0.0;
         tape.current() = Value(nlp.sentiment(stringifyValue(tape.current()), k, threshold));
     }
     else if (ins.opcode == "NLPGRAMMAR") {
@@ -1589,15 +2334,15 @@ void VM::execute(const Instruction& ins) {
         tape.current() = Value(nlp.relationExtraction(stringifyValue(tape.current())));
     }
     else if (ins.opcode == "NLPLOGIC") {
-        std::string operation = ins.args.empty() ? "contrapositive" : stringifyValue(parseValue(ins.args[0]));
+        std::string operation = ins.args.empty() ? "contrapositive" : stringOperand(ins.args[0], tape);
         tape.current() = Value(nlp.logicalOperation(stringifyValue(tape.current()), operation));
     }
     else if (ins.opcode == "NLPFUZZY") {
-        double membership = ins.args.empty() ? 1.0 : std::stod(ins.args[0]);
+        double membership = ins.args.empty() ? 1.0 : doubleOperand(ins.args[0], tape, ins.opcode, "membership");
         tape.current() = Value(nlp.fuzzyLogic(stringifyValue(tape.current()), membership));
     }
     else if (ins.opcode == "NLPPROB") {
-        std::string type = ins.args.empty() ? "token" : stringifyValue(parseValue(ins.args[0]));
+        std::string type = ins.args.empty() ? "token" : stringOperand(ins.args[0], tape);
         tape.current() = Value(nlp.probabilityCalc(stringifyValue(tape.current()), type));
     }
 
@@ -1609,13 +2354,13 @@ void VM::execute(const Instruction& ins) {
         if (ins.args.empty()) {
             tape.current() = Value(line);
         } else {
-            std::string typeArg = ins.args[0];
+            std::string typeArg = stringOperand(ins.args[0], tape);
             std::transform(typeArg.begin(), typeArg.end(), typeArg.begin(),
                            [](unsigned char c) { return std::tolower(c); });
             if (typeArg == "int") {
-                tape.current() = Value(static_cast<long long>(std::stoll(line)));
+                tape.current() = Value(parseLongLongStrict(line, ins.opcode, "input integer"));
             } else if (typeArg == "float") {
-                tape.current() = Value(std::stod(line));
+                tape.current() = Value(parseDoubleStrict(line, ins.opcode, "input float"));
             } else if (typeArg == "bool") {
                 tape.current() = Value(line == "true" || line == "1");
             } else {
@@ -1654,9 +2399,8 @@ void VM::execute(const Instruction& ins) {
             runBlock(codeCopy);
         } else if (tape.current().kind() == ValueKind::Str) {
             const std::string& s = std::get<std::string>(tape.current().data);
-            Instruction parsed = Parser::parse(s, 0);
-            if (!parsed.opcode.empty())
-                execute(parsed);
+            Code code = parseCodeSource(s);
+            runBlock(code);
         } else {
             throw std::runtime_error(ins.opcode + ": current cell must be Code or Str, got " +
                                      kindName(tape.current().kind()));
@@ -1677,7 +2421,7 @@ void VM::execute(const Instruction& ins) {
             tape.current() = Value(std::move(err));
 
             if (!ins.args.empty()) {
-                long long catchCell = std::stoll(argOrThrow(ins, 0));
+                long long catchCell = integerOperand(argOrThrow(ins, 0), tape, ins.opcode, "catch cell index");
                 auto* catchCode = std::get_if<Code>(&tape.cells[catchCell].data);
                 if (!catchCode)
                     throw std::runtime_error("TRY: catch cell must contain Code");
@@ -1690,7 +2434,7 @@ void VM::execute(const Instruction& ins) {
     else if (ins.opcode == "RAISE") {
         std::string message = ins.args.empty()
             ? stringifyValue(tape.current())
-            : stringifyValue(parseValue(argOrThrow(ins, 0)));
+            : stringOperand(argOrThrow(ins, 0), tape);
         throw std::runtime_error(message);
     }
 
@@ -1699,12 +2443,12 @@ void VM::execute(const Instruction& ins) {
     // Patterns: type names ("int","str",...), "_" wildcard, literals, list/map structures.
 
     else if (ins.opcode == "MATCH") {
-        Value pattern = parseValue(argOrThrow(ins, 0));
+        Value pattern = resolveOperand(argOrThrow(ins, 0), tape);
         Value original = tape.current();
         tape.current() = Value(matchPattern(original, pattern));
     }
 
-    else if (ins.opcode == "JSONGET") {
+    else if (ins.opcode == "JSONGET" || ins.opcode == "LIST_GET" || ins.opcode == "MAP_GET") {
         std::string key = stringifyValue(resolveOperand(argOrThrow(ins, 0), tape));
         Value original = tape.current();
 
@@ -1713,7 +2457,7 @@ void VM::execute(const Instruction& ins) {
             auto it = map.find(key);
             tape.current() = it == map.end() ? Value() : it->second;
         } else if (original.kind() == ValueKind::List && isInteger(key)) {
-            long long idx = std::stoll(key);
+            long long idx = parseLongLongStrict(key, ins.opcode, "list index");
             const auto& list = std::get<List>(original.data);
             if (idx < 0 || idx >= static_cast<long long>(list.size()))
                 tape.current() = Value();
@@ -1732,7 +2476,7 @@ void VM::execute(const Instruction& ins) {
             const auto& map = std::get<Map>(original.data);
             found = map.find(key) != map.end();
         } else if (original.kind() == ValueKind::List && isInteger(key)) {
-            long long idx = std::stoll(key);
+            long long idx = parseLongLongStrict(key, ins.opcode, "list index");
             const auto& list = std::get<List>(original.data);
             found = idx >= 0 && idx < static_cast<long long>(list.size());
         }
@@ -1781,7 +2525,7 @@ void VM::execute(const Instruction& ins) {
         if (tape.current().kind() == ValueKind::Map) {
             std::get<Map>(tape.current().data)[key] = value;
         } else if (tape.current().kind() == ValueKind::List && isInteger(key)) {
-            long long idx = std::stoll(key);
+            long long idx = parseLongLongStrict(key, ins.opcode, "list index");
             if (idx < 0) throw std::runtime_error("JSONSET: negative list index");
             auto& list = std::get<List>(tape.current().data);
             if (idx >= static_cast<long long>(list.size()))
@@ -1798,7 +2542,7 @@ void VM::execute(const Instruction& ins) {
         } else if (tape.current().kind() == ValueKind::Map) {
             std::get<Map>(tape.current().data).erase(key);
         } else if (tape.current().kind() == ValueKind::List && isInteger(key)) {
-            long long idx = std::stoll(key);
+            long long idx = parseLongLongStrict(key, ins.opcode, "list index");
             auto& list = std::get<List>(tape.current().data);
             if (idx >= 0 && idx < static_cast<long long>(list.size()))
                 list.erase(list.begin() + idx);
@@ -1834,7 +2578,7 @@ void VM::execute(const Instruction& ins) {
         tape.current() = Value(static_cast<long long>(code->size()));
     }
     else if (ins.opcode == "CODEGET") {
-        int idx = std::stoi(argOrThrow(ins, 0));
+        int idx = intOperand(argOrThrow(ins, 0), tape, ins.opcode, "instruction index");
         auto* code = std::get_if<Code>(&tape.current().data);
         if (!code) throw std::runtime_error("CODEGET: current cell must be Code");
         if (idx < 0 || idx >= (int)code->size())
@@ -1847,8 +2591,8 @@ void VM::execute(const Instruction& ins) {
         tape.current() = Value(std::move(lst));
     }
     else if (ins.opcode == "CODESET") {
-        int instrIdx  = std::stoi(argOrThrow(ins, 0));
-        long long cellIdx = std::stoll(argOrThrow(ins, 1));
+        int instrIdx  = intOperand(argOrThrow(ins, 0), tape, ins.opcode, "instruction index");
+        long long cellIdx = integerOperand(argOrThrow(ins, 1), tape, ins.opcode, "source cell index");
         auto* code = std::get_if<Code>(&tape.current().data);
         if (!code) throw std::runtime_error("CODESET: current cell must be Code");
         if (instrIdx < 0 || instrIdx >= (int)code->size())
@@ -1859,7 +2603,7 @@ void VM::execute(const Instruction& ins) {
         (*code)[instrIdx] = listToInstruction(std::get<List>(src.data));
     }
     else if (ins.opcode == "CODEAPPEND") {
-        long long cellIdx = std::stoll(argOrThrow(ins, 0));
+        long long cellIdx = integerOperand(argOrThrow(ins, 0), tape, ins.opcode, "source cell index");
         auto* code = std::get_if<Code>(&tape.current().data);
         if (!code) throw std::runtime_error("CODEAPPEND: current cell must be Code");
         const Value& src = tape.cells[cellIdx];
@@ -1872,7 +2616,7 @@ void VM::execute(const Instruction& ins) {
     // APPEND: append a value to a List cell, or an instruction (from List) to a Code cell.
 
     else if (ins.opcode == "APPEND") {
-        Value operand = parseValue(argOrThrow(ins, 0));
+        Value operand = resolveOperand(argOrThrow(ins, 0), tape);
         if (tape.current().kind() == ValueKind::List) {
             std::get<List>(tape.current().data).push_back(operand);
         } else if (tape.current().kind() == ValueKind::Code) {
@@ -1947,7 +2691,7 @@ void VM::execute(const Instruction& ins) {
     // ---- ML: Linear algebra -----------------------------------------------
 
     else if (ins.opcode == "DOTPROD") {
-        long long otherCell = std::stoll(argOrThrow(ins, 0));
+        long long otherCell = integerOperand(argOrThrow(ins, 0), tape, ins.opcode, "other cell index");
         auto* listA = std::get_if<List>(&tape.current().data);
         auto* listB = std::get_if<List>(&tape.cells[otherCell].data);
         if (!listA || !listB)
@@ -1988,7 +2732,7 @@ void VM::execute(const Instruction& ins) {
         tape.current() = Value(List{Value(slope), Value(intercept)});
     }
     else if (ins.opcode == "PREDICT") {
-        long long modelCell = std::stoll(argOrThrow(ins, 0));
+        long long modelCell = integerOperand(argOrThrow(ins, 0), tape, ins.opcode, "model cell index");
         auto* model = std::get_if<List>(&tape.cells[modelCell].data);
         if (!model || model->size() < 2)
             throw std::runtime_error("PREDICT: model cell must contain [slope, intercept]");
@@ -2001,8 +2745,8 @@ void VM::execute(const Instruction& ins) {
     // ---- ML: Clustering ---------------------------------------------------
 
     else if (ins.opcode == "KMEANS") {
-        int k        = std::stoi(argOrThrow(ins, 0));
-        int maxIters = ins.args.size() > 1 ? std::stoi(ins.args[1]) : 100;
+        int k        = intOperand(argOrThrow(ins, 0), tape, ins.opcode, "cluster count");
+        int maxIters = ins.args.size() > 1 ? intOperand(ins.args[1], tape, ins.opcode, "max iterations") : 100;
 
         auto* list = std::get_if<List>(&tape.current().data);
         if (!list || list->empty())
@@ -2050,13 +2794,13 @@ void VM::execute(const Instruction& ins) {
     // so nested calls are transparent. Old inline ARG system is preserved.
 
     else if (ins.opcode == "SETARG") {
-        size_t n = static_cast<size_t>(std::stoull(argOrThrow(ins, 0)));
+        size_t n = sizeOperand(argOrThrow(ins, 0), tape, ins.opcode, "argument register index");
         Value v = ins.args.size() > 1 ? resolveOperand(ins.args[1], tape) : tape.current();
         if (argRegs.size() <= n) argRegs.resize(n + 1);
         argRegs[n] = v;
     }
     else if (ins.opcode == "GETARG") {
-        size_t n = static_cast<size_t>(std::stoull(argOrThrow(ins, 0)));
+        size_t n = sizeOperand(argOrThrow(ins, 0), tape, ins.opcode, "argument register index");
         tape.current() = n < argRegs.size() ? argRegs[n] : Value();
     }
     else if (ins.opcode == "CLEAR_ARGS" || ins.opcode == "CLEARARGS") {
@@ -2078,7 +2822,7 @@ void VM::execute(const Instruction& ins) {
         Frame frame;
         frame.functionName = argOrThrow(ins, 0);
         for (size_t i = 1; i < ins.args.size(); ++i)
-            frame.args.push_back(parseValue(ins.args[i]));
+            frame.args.push_back(resolveOperand(ins.args[i], tape));
         // Save arg registers; callee inherits them (reads via GETARG),
         // may overwrite for sub-calls. Restored to caller's snapshot on RET.
         frame.savedArgRegs = argRegs;

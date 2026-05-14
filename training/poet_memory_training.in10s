@@ -1,0 +1,358 @@
+# Tape-native POET memory training program.
+#
+# This is the durable-memory driver around poet_algorithm_v1:
+# - seed sample problems into Postgres-backed tape cells
+# - retrieve only the required sample tape for each training case
+# - analyze the input with NLP tape operations
+# - call poet_solve
+# - store the answer, route, analysis, and pass/fail feedback as scalar tape cells
+#
+# Edit connect_memory if your local Postgres connection is different.
+#
+# Run:
+#   ./intense.out training/poet_memory_training.in10s main 40
+#
+# No database smoke:
+#   ./intense.out training/poet_memory_training.in10s smoke_no_db 8
+
+IMPORT poet_algorithm_v1.in10s
+
+main:
+    CALL connect_memory
+    CALL setup_memory_schema
+    CALL seed_sample_training_data
+    CALL run_all_memory_samples
+    CALL retrieve_stored_fact_answer
+    DBCLOSE
+    PRINTJ
+    RET
+
+smoke_no_db:
+    SET "== POET no-db smoke =="
+    PRINT
+
+    SETARG 0 "what is 8 plus 9"
+    SETARG 1 "training/common_memory/generated_outputs/smoke/poet_memory_training_smoke.in10s"
+    SETARG 2 "auto"
+    CALL poet_solve
+
+    TAPE 7
+    SEEK 0
+    SET "smoke answer:"
+    PRINT
+    TAPE 4
+    SEEK 6
+    PRINT
+    RET
+
+connect_memory:
+    TAPE 14
+    CLEAR_TAPE
+    SEEK 0
+    SET "host=localhost port=5432 dbname=AMU user=postgres password=postgres"
+    DBCONNECT @0
+    PRINTJ
+    RET
+
+setup_memory_schema:
+    READFILE "training/common_memory/postgres_schema.sql"
+    DBEXEC
+    PRINTJ
+
+    DB_TAPE_OPEN "poet_training_samples" "training_samples"
+    DB_TAPE_OPEN "poet_training_run" "training_run"
+    RET
+
+seed_sample_training_data:
+    SET "== seed POET training samples =="
+    PRINT
+    CALL seed_addition_sample
+    CALL seed_fact_sample
+    CALL seed_reverse_sample
+    CALL seed_unknown_sample
+    RET
+
+seed_addition_sample:
+    TAPE 20
+    CLEAR_TAPE
+    SEEK 0
+    SET "what is 8 plus 9"
+    DB_TAPE_INPUT "poet_training_samples"
+    SEEK 1
+    SET 17
+    DB_TAPE_INPUT "poet_training_samples"
+    SEEK 2
+    SET "training/common_memory/generated_outputs/db_training/addition_8_9.in10s"
+    DB_TAPE_INPUT "poet_training_samples"
+    SEEK 3
+    SET "addition"
+    DB_TAPE_INPUT "poet_training_samples"
+    SEEK 4
+    SET "sample:addition"
+    DB_TAPE_INPUT "poet_training_samples"
+    DB_TAPE_EVENT "poet_training_samples" "seed" "addition sample stored on tape 20"
+    RET
+
+seed_fact_sample:
+    TAPE 21
+    CLEAR_TAPE
+    SEEK 0
+    SET "how many legs does a dog have"
+    DB_TAPE_INPUT "poet_training_samples"
+    SEEK 1
+    SET 4
+    DB_TAPE_INPUT "poet_training_samples"
+    SEEK 2
+    SET "training/common_memory/generated_outputs/db_training/dog_legs.in10s"
+    DB_TAPE_INPUT "poet_training_samples"
+    SEEK 3
+    SET "fact_lookup"
+    DB_TAPE_INPUT "poet_training_samples"
+    SEEK 4
+    SET "sample:fact_lookup"
+    DB_TAPE_INPUT "poet_training_samples"
+    DB_TAPE_EVENT "poet_training_samples" "seed" "fact sample stored on tape 21"
+    RET
+
+seed_reverse_sample:
+    TAPE 22
+    CLEAR_TAPE
+    SEEK 0
+    SET "reverse the word poet"
+    DB_TAPE_INPUT "poet_training_samples"
+    SEEK 1
+    SET "teop"
+    DB_TAPE_INPUT "poet_training_samples"
+    SEEK 2
+    SET "training/common_memory/generated_outputs/db_training/reverse_poet.in10s"
+    DB_TAPE_INPUT "poet_training_samples"
+    SEEK 3
+    SET "reverse_word"
+    DB_TAPE_INPUT "poet_training_samples"
+    SEEK 4
+    SET "sample:reverse_word"
+    DB_TAPE_INPUT "poet_training_samples"
+    DB_TAPE_EVENT "poet_training_samples" "seed" "reverse sample stored on tape 22"
+    RET
+
+seed_unknown_sample:
+    TAPE 23
+    CLEAR_TAPE
+    SEEK 0
+    SET "what color is silence"
+    DB_TAPE_INPUT "poet_training_samples"
+    SEEK 1
+    SET "unable_to_answer"
+    DB_TAPE_INPUT "poet_training_samples"
+    SEEK 2
+    SET "training/common_memory/generated_outputs/db_training/unknown_color_silence.in10s"
+    DB_TAPE_INPUT "poet_training_samples"
+    SEEK 3
+    SET "no_known_route"
+    DB_TAPE_INPUT "poet_training_samples"
+    SEEK 4
+    SET "sample:unknown"
+    DB_TAPE_INPUT "poet_training_samples"
+    DB_TAPE_EVENT "poet_training_samples" "seed" "unknown sample stored on tape 23"
+    RET
+
+run_all_memory_samples:
+    SETARG 0 20
+    SETARG 1 30
+    SETARG 2 "addition sample"
+    CALL run_stored_sample
+
+    SETARG 0 21
+    SETARG 1 31
+    SETARG 2 "fact sample"
+    CALL run_stored_sample
+
+    SETARG 0 22
+    SETARG 1 32
+    SETARG 2 "reverse sample"
+    CALL run_stored_sample
+
+    SETARG 0 23
+    SETARG 1 33
+    SETARG 2 "unknown sample"
+    CALL run_stored_sample
+    RET
+
+run_stored_sample:
+    TAPE 14
+    CLEAR_TAPE
+    SEEK 0
+    GETARG 0
+    SEEK 1
+    GETARG 1
+    SEEK 2
+    GETARG 2
+
+    SEEK 40
+    SET "== run stored sample =="
+    PRINT
+    SEEK 2
+    PRINT
+
+    CALL retrieve_required_sample
+    CALL analyze_required_sample
+    CALL call_poet_for_required_sample
+    CALL store_required_result
+    RET
+
+retrieve_required_sample:
+    TAPE 14
+    SEEK 3
+    DB_TAPE_LOAD "poet_training_samples" @0
+    SEEK 10
+    DB_TAPE_OUTPUT "poet_training_samples" @0 0
+    SEEK 11
+    DB_TAPE_OUTPUT "poet_training_samples" @0 1
+    SEEK 12
+    DB_TAPE_OUTPUT "poet_training_samples" @0 2
+    SEEK 13
+    DB_TAPE_OUTPUT "poet_training_samples" @0 3
+    RET
+
+analyze_required_sample:
+    TAPE 8
+    CLEAR_TAPE
+    SEEK 0
+    TAPEREAD 14 10
+    NLPTOKENS
+
+    SEEK 1
+    TAPEREAD 14 10
+    NLPRELATIONS
+
+    SEEK 2
+    TAPEREAD 14 10
+    NLPANALYZE
+
+    SEEK 3
+    TAPEREAD 14 13
+
+    SEEK 4
+    SET "analysis: tokenize input, extract relation, select expected route, call poet_solve"
+    RET
+
+call_poet_for_required_sample:
+    TAPE 14
+    SEEK 10
+    SETARG 0
+    SEEK 12
+    SETARG 1
+    SETARG 2 "auto"
+    CALL poet_solve
+    RET
+
+store_required_result:
+    TAPE 14
+    SEEK 20
+    TAPE 4
+    SEEK 6
+    COPY 14
+
+    TAPE 14
+    SEEK 21
+    TAPE 4
+    SEEK 1
+    COPY 14
+    TAPE 14
+    SEEK 21
+    CAST str
+
+    SEEK 22
+    TAPE 8
+    SEEK 1
+    COPY 14
+    TAPE 14
+    SEEK 22
+    CAST str
+
+    SEEK 23
+    TAPE 8
+    SEEK 2
+    COPY 14
+    TAPE 14
+    SEEK 23
+    CAST str
+
+    TAPE 14
+    SEEK 2
+    DB_TAPE_INPUT "poet_training_run" @1 0 @2
+    SEEK 10
+    DB_TAPE_INPUT "poet_training_run" @1 1 @10
+    SEEK 11
+    DB_TAPE_INPUT "poet_training_run" @1 2 @11
+    SEEK 20
+    DB_TAPE_INPUT "poet_training_run" @1 3 @20
+    SEEK 21
+    DB_TAPE_INPUT "poet_training_run" @1 4 @21
+    SEEK 22
+    DB_TAPE_INPUT "poet_training_run" @1 5 @22
+    SEEK 23
+    DB_TAPE_INPUT "poet_training_run" @1 6 @23
+
+    SEEK 40
+    SET "answer:"
+    PRINT
+    SEEK 20
+    PRINT
+
+    TAPE 15
+    CLEAR_TAPE
+    SEEK 0
+    TAPE 14
+    SEEK 11
+    COPY 15
+
+    TAPE 14
+    SEEK 20
+    CMP 15
+    JMPIF $sample_pass
+
+    SEEK 24
+    SET "fail"
+    DB_TAPE_INPUT "poet_training_run" @1 7 @24
+    TAPE @1
+    SEEK 99
+    DB_TAPE_EVENT "poet_training_run" "feedback" "stored sample failed expected-answer check"
+    TAPE 14
+    SEEK 41
+    SET "feedback: failed"
+    PRINT
+    RET
+
+$sample_pass:
+    TAPE 14
+    SEEK 24
+    SET "pass"
+    DB_TAPE_INPUT "poet_training_run" @1 7 @24
+    TAPE @1
+    SEEK 99
+    DB_TAPE_EVENT "poet_training_run" "feedback" "stored sample passed expected-answer check"
+    TAPE 14
+    SEEK 41
+    SET "feedback: accepted"
+    PRINT
+    RET
+
+retrieve_stored_fact_answer:
+    TAPE 14
+    SEEK 30
+    SET "== retrieve persisted fact answer =="
+    PRINT
+
+    SEEK 31
+    DB_TAPE_OUTPUT "poet_training_run" 31 1
+    PRINT
+
+    SEEK 32
+    DB_TAPE_OUTPUT "poet_training_run" 31 3
+    PRINT
+
+    SEEK 33
+    DB_TAPE_OUTPUT "poet_training_run" 31 5
+    PRINT
+    RET

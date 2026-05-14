@@ -1,0 +1,67 @@
+# Test: AMU Postgres-backed logic network
+#
+# Uses the local credentials:
+#   dbname=AMU user=postgres password=postgres
+#
+# Run:
+#   ./intense.out examples/test_db_amu_logic_network.in10s main 4
+
+main:
+    SET "host=localhost port=5432 dbname=AMU user=postgres password=postgres"
+    DBCONNECT
+    PRINTJ
+
+    READFILE "training/common_memory/postgres_schema.sql"
+    DBEXEC
+    PRINTJ
+
+    DBDELETE "logic_edges" "source_key IN ('cat','human') OR target_key IN ('cat','human','legs','count_4','count_2')"
+    PRINTJ
+    DBDELETE "logic_nodes" "node_key IN ('cat','human','legs','count_4','count_2')"
+    PRINTJ
+
+    SET {"node_key":"cat","kind":"entity","payload":{"name":"cat","class":"animal"},"confidence":0.95}
+    DBINSERT "logic_nodes"
+    PRINTJ
+
+    SET {"node_key":"human","kind":"entity","payload":{"name":"human","class":"animal"},"confidence":0.95}
+    DBINSERT "logic_nodes"
+    PRINTJ
+
+    SET {"node_key":"legs","kind":"attribute","payload":{"name":"legs","question":"how_many"},"confidence":0.9}
+    DBINSERT "logic_nodes"
+    PRINTJ
+
+    SET {"node_key":"count_4","kind":"quantity","payload":{"value":"4","number":4},"confidence":0.98}
+    DBINSERT "logic_nodes"
+    PRINTJ
+
+    SET {"node_key":"count_2","kind":"quantity","payload":{"value":"2","number":2},"confidence":0.98}
+    DBINSERT "logic_nodes"
+    PRINTJ
+
+    SET {"source_key":"cat","relation":"has_attribute","target_key":"legs","logic_weight":{"state":"assumed","support":"observation","scope":"general"},"evidence":{"source":"example","text":"cat has legs"}}
+    DBINSERT "logic_edges"
+    PRINTJ
+
+    SET {"source_key":"cat","relation":"legs_count","target_key":"count_4","logic_weight":{"state":"confirmed","support":"training_example","scope":"normal_case"},"evidence":{"source":"example","text":"cat has 4 legs"},"generated_logic":"SET 4"}
+    DBINSERT "logic_edges"
+    PRINTJ
+
+    SET {"source_key":"human","relation":"legs_count","target_key":"count_2","logic_weight":{"state":"confirmed","support":"training_example","scope":"normal_case"},"evidence":{"source":"example","text":"human has 2 legs"},"generated_logic":"SET 2"}
+    DBINSERT "logic_edges"
+    PRINTJ
+
+    SET {"source_key":"cat","relation":"contrast","target_key":"human","logic_weight":{"state":"assumed","support":"derived_contrast","scope":"comparison"},"evidence":{"basis":"legs_count","note":"cat usually has 4 legs; human usually has 2"}}
+    DBINSERT "logic_edges"
+    PRINTJ
+
+    DBQUERY "SELECT e.source_key, e.relation, e.target_key, target.payload::text AS target_payload, e.logic_weight::text AS logic_weight FROM logic_edges e JOIN logic_nodes target ON target.node_key = e.target_key WHERE e.source_key = 'cat' ORDER BY CASE e.logic_weight->>'state' WHEN 'preferred' THEN 1 WHEN 'confirmed' THEN 2 WHEN 'assumed' THEN 3 WHEN 'weak_assumption' THEN 4 WHEN 'disputed' THEN 5 ELSE 6 END, e.relation"
+    PRINTJ
+
+    DBQUERY "SELECT target.payload->>'value' AS answer, e.generated_logic, e.logic_weight::text AS logic_weight FROM logic_edges e JOIN logic_nodes target ON target.node_key = e.target_key WHERE e.source_key = 'cat' AND e.relation = 'legs_count' AND e.validity = 'active' ORDER BY CASE e.logic_weight->>'state' WHEN 'preferred' THEN 1 WHEN 'confirmed' THEN 2 WHEN 'assumed' THEN 3 WHEN 'weak_assumption' THEN 4 WHEN 'disputed' THEN 5 ELSE 6 END LIMIT 1"
+    PRINTJ
+
+    DBCLOSE
+    PRINTJ
+    RET
