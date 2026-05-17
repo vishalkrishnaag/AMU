@@ -419,20 +419,6 @@ static bool isLabelOnlyLine(const std::string& line) {
     return tokens.size() == 1 && !tokens[0].empty() && tokens[0].back() == ':';
 }
 
-static bool isGlobalLabelOnlyLine(const std::string& line, std::string* labelOut = nullptr) {
-    auto tokens = Lexer::tokenize(line);
-    if (tokens.size() != 1 || tokens[0].empty() || tokens[0].back() != ':')
-        return false;
-
-    std::string label = tokens[0].substr(0, tokens[0].size() - 1);
-    if (label.empty() || label[0] == '$')
-        return false;
-
-    if (labelOut)
-        *labelOut = label;
-    return true;
-}
-
 static bool isDefLine(const std::string& line, std::string* labelOut = nullptr) {
     auto tokens = Lexer::tokenize(line);
     if (tokens.size() != 2)
@@ -460,6 +446,18 @@ static bool isEndLine(const std::string& line) {
     return opcode == "END";
 }
 
+static bool isHormoneBlockLine(const std::string& line) {
+    auto tokens = Lexer::tokenize(line);
+    if (tokens.size() != 2)
+        return false;
+
+    std::string opcode = tokens[0];
+    std::transform(opcode.begin(), opcode.end(), opcode.begin(),
+                   [](unsigned char c) { return std::toupper(c); });
+    return (opcode == "HORMONE" || opcode == "HORMONE_DEF" || opcode == "HORMONE_CREATE")
+        && !tokens[1].empty();
+}
+
 static bool isImportLine(const std::string& line) {
     auto tokens = Lexer::tokenize(line);
     if (tokens.empty())
@@ -476,7 +474,7 @@ static bool sourceLoadsIntoProgram(const std::string& source) {
         std::string statement = trim(rawStatement);
         if (statement.empty())
             continue;
-        if (isImportLine(statement) || isDefLine(statement) || isGlobalLabelOnlyLine(statement))
+        if (isImportLine(statement) || isDefLine(statement))
             return true;
     }
     return false;
@@ -515,26 +513,25 @@ static bool collectDefinitionSource(
     std::string& source
 ) {
     std::string label;
-    bool newStyle = isDefLine(firstLine, &label);
-    if (!newStyle)
-        isGlobalLabelOnlyLine(firstLine, &label);
+    isDefLine(firstLine, &label);
 
-    std::cout << "Defining " << label << ". Finish with "
-              << (newStyle ? "end" : ":end or a blank line")
-              << "; use :cancel to abort.\n";
+    std::cout << "Defining " << label << ". Finish with end; use :cancel to abort.\n";
     source = firstLine;
     source += "\n";
 
     std::string entry;
+    int nestedBlocks = 0;
     while (readReplEntry("def...> ", entry, commandHistory)) {
         std::string stripped = trim(entry);
-        if (newStyle && isEndLine(stripped)) {
+        if (isHormoneBlockLine(stripped)) {
+            ++nestedBlocks;
+        } else if (isEndLine(stripped) && nestedBlocks > 0) {
+            --nestedBlocks;
+        } else if (isEndLine(stripped)) {
             source += entry;
             source += "\n";
             return true;
         }
-        if (!newStyle && (stripped.empty() || stripped == ":end"))
-            return true;
         if (stripped == ":cancel") {
             std::cout << "Definition canceled.\n";
             source.clear();
@@ -658,8 +655,9 @@ static bool startsWithCommand(const std::string& line, const std::string& comman
 
 static void writeReplBootFile(const std::string& path) {
     std::ofstream out(path);
-    out << "main:\n"
-        << "    RET\n";
+    out << "def main\n"
+        << "    RET\n"
+        << "end\n";
 }
 
 static void printReplHelp() {
@@ -728,10 +726,11 @@ static void saveReplSession(
     if (!sessionSource.empty())
         out << "\n";
 
-    out << "main:\n";
+    out << "def main\n";
     for (const auto& line : sessionMain)
         out << "    " << line << "\n";
-    out << "    RET\n";
+    out << "    RET\n"
+        << "end\n";
     std::cout << "Saved " << path << "\n";
 }
 
@@ -783,7 +782,7 @@ static int runRepl(int argc, char* argv[]) {
             continue;
         }
 
-        if (isDefLine(line) || isGlobalLabelOnlyLine(line)) {
+        if (isDefLine(line)) {
             std::string source;
             if (!collectDefinitionSource(entry, history, source))
                 continue;

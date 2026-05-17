@@ -4,6 +4,7 @@
 def main
 CALL greet
 CALL countdown
+CALL branch_return
 RET
 end
 
@@ -18,8 +19,18 @@ SET 3
 $loop:
 PRINT
 SUB 1
-JMPNOT $done
-JMP $loop
-$done:
+JMPIF $loop
+RET
+end
+
+def branch_return
+SET 1
+JMPIF $truthy
+SET "false branch"
+PRINT
+RET
+$truthy:
+SET "true branch"
+PRINT
 RET
 end

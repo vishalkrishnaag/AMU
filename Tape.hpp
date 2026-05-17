@@ -6,7 +6,6 @@
 
 struct Tape {
     std::unordered_map<long long, Value> cells;
-    std::unordered_map<std::string, long long> functions;
     std::string name;
     long long ptr = 0;
 

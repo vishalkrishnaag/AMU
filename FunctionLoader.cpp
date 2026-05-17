@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <sstream>
 #include <cctype>
+#include <utility>
 
 FunctionLoader::FunctionLoader(const std::string& file)
     : filename(file)
@@ -44,17 +45,125 @@ static bool defFromLine(const std::string& line, std::string& label) {
     return !label.empty() && label[0] != '$';
 }
 
-static bool functionStartFromLine(const std::string& line, std::string& label) {
-    if (defFromLine(line, label))
-        return true;
-    if (labelFromLine(line, label))
-        return !label.empty() && label[0] != '$';
-    return false;
-}
-
 static bool endFromLine(const std::string& line) {
     auto tokens = Lexer::tokenize(line);
     return tokens.size() == 1 && toUpper(tokens[0]) == "END";
+}
+
+static bool hormoneBlockFromLine(const std::string& line, std::string& name) {
+    auto tokens = Lexer::tokenize(line);
+    if (tokens.size() != 2)
+        return false;
+    std::string opcode = toUpper(tokens[0]);
+    if (opcode != "HORMONE" && opcode != "HORMONE_DEF" && opcode != "HORMONE_CREATE")
+        return false;
+    name = tokens[1];
+    return !name.empty();
+}
+
+static void setHormoneField(
+    const std::string& key,
+    const std::string& value,
+    std::string& level,
+    std::string& nature,
+    std::string& minValue,
+    std::string& maxValue,
+    std::string& baseline,
+    std::string& decay,
+    std::string& sensitivity,
+    std::string& weight
+) {
+    std::string upper = toUpper(key);
+    if (upper == "LEVEL" || upper == "HORMONE_LEVEL") {
+        level = value;
+    } else if (upper == "NATURE" || upper == "HORMONE_NATURE" ||
+               upper == "BEHAVIOR" || upper == "HORMONE_BEHAVIOR" ||
+               upper == "TYPE" || upper == "HORMONE_TYPE") {
+        nature = value;
+    } else if (upper == "MIN" || upper == "HORMONE_MIN") {
+        minValue = value;
+    } else if (upper == "MAX" || upper == "HORMONE_MAX" || upper == "HORMOE_MAX") {
+        maxValue = value;
+    } else if (upper == "BASELINE" || upper == "HORMONE_BASELINE") {
+        baseline = value;
+    } else if (upper == "DECAY" || upper == "HORMONE_DECAY") {
+        decay = value;
+    } else if (upper == "SENSITIVITY" || upper == "HORMONE_SENSITIVITY") {
+        sensitivity = value;
+    } else if (upper == "WEIGHT" || upper == "HORMONE_WEIGHT") {
+        weight = value;
+    } else {
+        throw std::runtime_error("Unknown hormone field: " + key);
+    }
+}
+
+static Instruction parseHormoneBlock(
+    const std::vector<std::string>& lines,
+    size_t& index,
+    const std::string& functionName,
+    int lineNumber
+) {
+    std::string hormoneName;
+    if (!hormoneBlockFromLine(lines[index], hormoneName))
+        throw std::runtime_error("Internal error: expected HORMONE block");
+
+    std::string level;
+    std::string nature = "custom";
+    std::string minValue = "0";
+    std::string maxValue = "100";
+    std::string baseline;
+    std::string decay = "0";
+    std::string sensitivity = "1";
+    std::string weight = "1";
+
+    for (size_t i = index + 1; i < lines.size(); ++i) {
+        if (endFromLine(lines[i])) {
+            if (level.empty())
+                throw std::runtime_error("HORMONE " + hormoneName + " is missing hormone_level");
+            if (baseline.empty())
+                baseline = level;
+
+            Instruction ins;
+            ins.line = lineNumber;
+            ins.opcode = "HORMONE";
+            ins.args = {
+                hormoneName,
+                level,
+                nature,
+                minValue,
+                maxValue,
+                baseline,
+                decay,
+                sensitivity,
+                weight
+            };
+            index = i;
+            return ins;
+        }
+
+        std::string label;
+        if (defFromLine(lines[i], label))
+            throw std::runtime_error("Function " + functionName +
+                                     " has HORMONE " + hormoneName +
+                                     " missing end before def " + label);
+        if (labelFromLine(lines[i], label))
+            throw std::runtime_error("HORMONE " + hormoneName +
+                                     " cannot contain labels; close it with end first");
+
+        auto tokens = Lexer::tokenize(lines[i]);
+        if (tokens.empty())
+            continue;
+        if (tokens.size() % 2 != 0)
+            throw std::runtime_error("HORMONE " + hormoneName +
+                                     " fields must be key value pairs");
+        for (size_t j = 0; j < tokens.size(); j += 2) {
+            setHormoneField(tokens[j], tokens[j + 1], level, nature, minValue,
+                            maxValue, baseline, decay, sensitivity, weight);
+        }
+    }
+
+    throw std::runtime_error("Function " + functionName +
+                             " has HORMONE " + hormoneName + " missing end");
 }
 
 static bool isIntenseSource(const std::filesystem::path& path) {
@@ -145,7 +254,7 @@ void FunctionLoader::buildIndex() {
     labelIndex.clear();
     for (size_t i = 0; i < lines.size(); ++i) {
         std::string label;
-        if (functionStartFromLine(lines[i], label))
+        if (defFromLine(lines[i], label))
             labelIndex[toUpper(trim(label))] = i;
     }
 }
@@ -195,11 +304,20 @@ Function FunctionLoader::loadFunction(const std::string& name) {
     for (size_t i = startLine; i < lines.size(); ++i) {
         std::string label;
 
-        if (endFromLine(lines[i]))
+        if (endFromLine(lines[i])) {
+            startLine = i;
             break;
+        }
 
         if (defFromLine(lines[i], label))
-            break;
+            throw std::runtime_error("Function " + name + " is missing end before def " + label);
+
+        std::string hormoneName;
+        if (hormoneBlockFromLine(lines[i], hormoneName)) {
+            auto ins = parseHormoneBlock(lines, i, name, lineNumber++);
+            fn.instructions.push_back(std::move(ins));
+            continue;
+        }
 
         if (labelFromLine(lines[i], label)) {
             if (label[0] == '$') {
@@ -207,14 +325,17 @@ Function FunctionLoader::loadFunction(const std::string& name) {
                 fn.localLabels[toUpper(trim(label))] = fn.instructions.size();
                 continue;
             }
-            // Global function label → end of this function
-            break;
+            throw std::runtime_error("Function " + name + " uses label '" + label +
+                                     ":'; functions must start with def, and local labels must use $label:");
         }
 
         auto ins = Parser::parse(lines[i], lineNumber++);
         if (!ins.opcode.empty())
             fn.instructions.push_back(ins);
     }
+
+    if (startLine >= lines.size() || !endFromLine(lines[startLine]))
+        throw std::runtime_error("Function " + name + " is missing end");
 
     // Evict LRU entry if at capacity
     if ((int)cache.size() >= MAX_FUNCTIONS) {
@@ -229,4 +350,55 @@ Function FunctionLoader::loadFunction(const std::string& name) {
     lruIters[normName] = std::prev(lru.end());
 
     return fn;
+}
+
+std::vector<Instruction> FunctionLoader::loadFunctionCode(const std::string& name) {
+    std::string normName = toUpper(name);
+
+    if (!labelIndex.count(normName))
+        throw std::runtime_error("Function not found: " + name);
+
+    size_t startLine = labelIndex[normName] + 1;
+    std::vector<Instruction> code;
+    int lineNumber = 0;
+
+    for (size_t i = startLine; i < lines.size(); ++i) {
+        std::string label;
+
+        if (endFromLine(lines[i])) {
+            startLine = i;
+            break;
+        }
+
+        if (defFromLine(lines[i], label))
+            throw std::runtime_error("Function " + name + " is missing end before def " + label);
+
+        std::string hormoneName;
+        if (hormoneBlockFromLine(lines[i], hormoneName)) {
+            auto ins = parseHormoneBlock(lines, i, name, lineNumber++);
+            code.push_back(std::move(ins));
+            continue;
+        }
+
+        if (labelFromLine(lines[i], label)) {
+            if (label[0] == '$') {
+                Instruction marker;
+                marker.opcode = "LABEL";
+                marker.args.push_back(toUpper(trim(label)));
+                code.push_back(std::move(marker));
+                continue;
+            }
+            throw std::runtime_error("Function " + name + " uses label '" + label +
+                                     ":'; functions must start with def, and local labels must use $label:");
+        }
+
+        auto ins = Parser::parse(lines[i], lineNumber++);
+        if (!ins.opcode.empty())
+            code.push_back(ins);
+    }
+
+    if (startLine >= lines.size() || !endFromLine(lines[startLine]))
+        throw std::runtime_error("Function " + name + " is missing end");
+
+    return code;
 }

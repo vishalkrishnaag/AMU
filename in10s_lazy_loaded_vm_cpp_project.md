@@ -45,14 +45,15 @@ SET 42       # stores integer 42 in the current cell
 ### 3 — Opcodes are case-insensitive
 `SET`, `set`, and `Set` are all equivalent.
 
-### 4 — Labels define functions
-A line ending with `:` defines a label (function entry point). Labels are case-insensitive.
+### 4 — Functions use def/end
+`def name` starts a function and `end` closes it. Function names are case-insensitive.
 
 ```
-my_function:
+def my_function
     SET 99
     PRINT
     RET
+end
 ```
 
 ### 5 — Value types are explicit (ValueKind enum)
@@ -73,21 +74,18 @@ The VM uses a strict `ValueKind` enum — no implicit type guessing:
 ### 6 — Tapes are sparse integer→Value maps
 Each tape is an `unordered_map<long long, Value>`. The tape pointer starts at 0. Unwritten cells return `nil`.
 
-Tapes can also act as lightweight modules. Cell `-2` stores an optional tape
-name, and cell `-1` stores a function directory map where each key is a function
-name and each value is the tape cell containing a `Code` value or source string.
+Tapes can be named for a purpose. Cell `-2` stores the optional tape name so
+instructions such as `TAPE file_tape` can select it without relying on a raw
+index.
 
 ### 7 — Functions, CALL, and RET
 ```
 CALL function_name [arg0] [arg1] ...
-CALL tape1.function_name
-CALL file_tape.function_name
 CALL @0
 ```
 Arguments are parsed as Values. `CALL name` still runs a source-loaded
-function. Dotted calls resolve against tape module names (`tape1.fn`,
-`file_tape.fn`). `CALL @0` can dispatch from a cell containing a function name
-or a `Code` value. `RET` returns to the caller.
+function. `CALL @0` can dispatch from a cell containing a function name or a
+`Code` value. `RET` returns to the caller.
 
 ### 8 — Imports
 ```
@@ -110,22 +108,116 @@ Resolved relative to the importing file. Circular imports are detected and skipp
 | `HOME`      | Reset the active tape pointer to cell 0 |
 | `TAPE n/name` | Switch active tape to non-negative index, `tapeN`, or a named tape; tapes grow on demand |
 | `PRINT_TAPE n/name` | Print tape without switching the active tape; accepts index or named tape |
-| `TAPENAME name` / `NAMETAPE name` | Name the active tape and store that name in reserved cell `-2` |
-| `TAPENAME tape name` | Name a specific tape by index or existing tape name |
-| `TAPEDEF name [cell]` / `TFUNC` | Add/update a function entry in reserved cell `-1`; default cell is the current pointer |
-| `TAPEUNDEF name` | Remove a function entry from the active tape module |
-| `TAPEFUNCS [tape]` | Store the selected tape's function names as a List in the current cell |
+| `TAPE_NAME name` | Name the active tape and store that name in reserved cell `-2` |
+| `TAPE_NAME tape name` | Name a specific tape by index or existing tape name |
+
+### Incognito Worksheets
+
+Worksheets are temporary tapes for problem visualization and short-term
+reasoning. They are auto-cleaned when the creating function or Code block
+returns unless promoted.
+
+| Instruction | Description |
+|-------------|-------------|
+| `WORKSHEET_BEGIN [name]` | Create a temporary tape, name it, push a worksheet frame, and switch to it |
+| `WORKSHEET_END [keep]` | Close the active worksheet, restore the previous tape, and destroy it unless kept |
+| `WORKSHEET_KEEP [name]` | Promote the active worksheet into a normal named tape |
+| `WORKSHEET_STATE` | Store the active worksheet stack in the current cell |
+
+### Emotional / Hormone Tape
+
+These instructions build a programmable signaling tape. Hormone names are
+custom strings; `cortisol`, `dopamine`, and `adrenaline` are examples, not
+reserved names. Reserved cells on the emotional tape are `-20` for the hormone
+registry, `-21` for event rules, and `-22` for the logical tick clock.
+
+| Instruction | Description |
+|-------------|-------------|
+| `EMO_INIT [name]` / `EMOTIONAL_TAPE` | Initialize the active tape as a named emotional tape |
+| `HORMONE name ... end` | Create/update a hormone signal with readable block fields |
+| `HORMONE_SET name level` | Set a hormone percentage, clamped to its bounds |
+| `HORMONE_ADD name delta` / `HORMONE_SPIKE` / `HORMONE_DROP` | Adjust a hormone level; blocked spike/drop windows are respected |
+| `HORMONE_BLOCK name ticks [spike|drop|both]` | Prevent further changes in one direction until the logical tick expires |
+| `HORMONE_UNBLOCK name` | Clear a hormone block window |
+| `HORMONE_LEVEL name` | Store the current hormone level in the current cell |
+| `HORMONE_INFO name` | Store the full hormone metadata map in the current cell |
+| `EMO_ON event action [options] conditions...` | Register a trigger; conditions are all required |
+| `EMO_CHECK` | Evaluate triggers and call their action functions, or `EXIT`/`SHUTDOWN` |
+| `EMO_TICK [n]` | Advance logical time, drift hormones toward baseline, and run `EMO_CHECK` |
+| `EMO_FIELD` | Store the current global emotional field summary |
+| `EMO_STATE` | Store `{tick,hormones,events,field}` in the current cell |
+
+Trigger conditions can be compact (`dopamine>=60`) or spaced
+(`dopamine >= 60`). Multiple conditions create a combination trigger. Options
+include `cooldown=N`, `refractory=N`, `block=name1,name2`, and `block_for=N`.
+
+Hormones should prefer block syntax once they carry more than a level:
+
+```intense
+HORMONE cortisol
+    hormone_level 5
+    hormone_nature stress
+    hormone_min 0
+    hormone_max 100
+    hormone_baseline 20
+    hormone_decay 0.1
+    hormone_sensitivity 1
+    hormone_weight 1
+end
+```
+
+The loader lowers that block into the VM's compact hormone instruction. Fields
+can also be written as short names (`level`, `nature`, `min`, `max`,
+`baseline`, `decay`, `sensitivity`, `weight`).
+
+### Poet / Rational Scaffolding
+
+These are explicit symbolic hooks for hierarchical reasoning: retrieve relevant
+tapes, choose a strategy, and gate activation by evidence rather than
+probability alone.
+
+| Instruction | Description |
+|-------------|-------------|
+| `POET_SEARCH [query] [limit]` | Search all tape cells for textual relevance; results include `address` as `tape.cell` |
+| `POET_STRATEGY [problem]` | Classify a problem and return selected layers/methods/evidence gate |
+| `RATIONAL_RUN [boolean|fuzzy|math|nlp|ml]` | Evaluate the current cell through one rational layer and return structured evidence |
 
 ### Inter-Tape Communication
+
+Modern routed addressing uses `tape.cell`, where the tape side may be a numeric
+index (`1.2`) or a `TAPE_NAME` (`memory_1alpha.2`). A routed resource locator can
+also be written as `@tape.cell`; `@N` keeps its original meaning as a local cell
+reference or an indirect cell containing an address.
 
 | Instruction | Description |
 |-------------|-------------|
 | `COPY tape` | Copy current cell to the destination tape's current pointer |
-| `TAPEREAD tape [cell]` / `TGET` / `PEEK` | Read another tape cell into the current cell; default cell is that tape's pointer |
-| `TAPEWRITE tape [cell] [value]` / `TPUT` / `POKE` | Write current cell, or `value`, into another tape cell |
-| `TAPESWAP tape [cell]` / `TSWAP` | Swap current cell with another tape cell |
-| `TAPESEND tape [cell] [value]` / `TSEND` / `SEND` | Append current cell, or `value`, to a list mailbox on another tape |
+| `TAPEREAD tape [cell]` / `TGET` / `PEEK` | Read another tape cell, or a routed address like `1.2`, into the current cell |
+| `TAPEWRITE tape [cell] [value]` / `TPUT` / `POKE` | Write current cell, or `value`, into another tape cell or routed address |
+| `TAPESWAP tape [cell]` / `TSWAP` | Swap current cell with another tape cell or routed address |
+| `TAPESEND tape [cell] [value]` / `TSEND` / `SEND` | Append current cell, or `value`, to a list mailbox on another tape or routed address |
 | `TAPERECV tape [cell]` / `TRECV` / `RECV` | Pop the oldest value from a list mailbox into the current cell; empty mailbox gives `nil` |
+| `ROUTE_ADDR [tape] [cell]` / `RADDR` | Return the canonical numeric address for the current cell, a cell, or a tape/cell pair |
+| `ROUTE_GET address` / `RGET` | Read a routed address into the current cell |
+| `ROUTE_SET address [value]` / `RSET` | Write current cell, or `value`, into a routed address |
+| `ROUTE_LINK from to [relation] [strength]` / `RLINK` / `CONNECT` | Create or update a weighted cell-to-cell connection |
+| `ROUTE_TOUCH from to [relation] [delta]` / `RTOUCH` | Strengthen or weaken an existing connection; default delta is `0.1` |
+| `ROUTE_FOLLOW address [relation] [limit]` / `RFOLLOW` | Return strongest linked target cells, including their current `value` |
+| `ROUTE_INFO address` / `RINFO` | Return address metadata plus incoming/outgoing links |
+| `ROUTE_RESOURCE key [kind] [label]` / `RRESOURCE` | Create or reuse a central resource cell in the active model tape |
+| `ROUTE_ALIAS canonical_key alias_key` / `RALIAS` | Add an alternate lookup key for the same central resource |
+| `ROUTE_ASSOC from_key to_key [relation] [strength]` / `RASSOC` | Connect two model resources by key without manual address lookup |
+| `ROUTE_FRAME key [decision] [question]` / `RFRAME` | Define a direct router frame as a central decision point |
+| `ROUTE_TRIGGER frame_key concept_key [strength]` / `RTRIGGER` | Add required evidence for a frame; matched by direct resource index lookup |
+| `ROUTE_SLOT frame_key slot_key [question]` / `RSLOT` | Add a missing information slot that the frame should ask for |
+| `ROUTE_OBSERVE [text] [memory_tape]` / `ROBSERVE` | Store a statement as an observation and build understandable resource associations |
+| `ROUTE_LEARN [text] [memory_tape]` / `RLEARN` | Alias of `ROUTE_OBSERVE` for compatibility |
+| `ROUTE_CONTEXT [text] [memory_tape] [limit]` / `RCONTEXT` | Inspect recognized resources, unresolved concepts, associations, and possible frames without deciding |
+| `ROUTE_USE key_or_address [memory_tape] [amount]` / `RUSE` | Mark a resource/observation as currently used and heat it for runtime cache retention |
+| `ROUTE_CACHE [memory_tape] [hot] [cold]` / `RCACHE` | Classify active route cells as hot/warm/cold for model-cache management |
+| `ROUTE_PACK [memory_tape] [hot|warm|cold|*]` / `RPACK` | Serialize selected route cells into scalar JSON text suitable for DB persistence |
+| `ROUTE_UNPACK [payload] [memory_tape]` / `RUNPACK` | Rehydrate a packed route snapshot and rebuild resource/frame indexes |
+| `ROUTE_REASON [text] [memory_tape]` / `RREASON` / `ROUTE_QUERY` | Optional model-level dispatch: match context against frame triggers and return an explainable route decision |
 
 ### Tape-Native Postgres Memory
 
@@ -193,7 +285,7 @@ The operand argument accepts two forms:
 The index refers to the **active tape** (use `TAPE n` first for cross-tape reads).
 
 ```intense
-main:
+def main
     SEEK 0
     SET 10          # cell[0] = 10
     SEEK 1
@@ -205,6 +297,7 @@ main:
     DIV @0          # cell[5] = 43 / cell[0]  →  4  (int)
     PRINT
     RET
+end
 ```
 
 ### Control Flow
@@ -213,15 +306,14 @@ Local jump labels use `$name:` so they are visually distinct from `@N` cell refe
 They are scoped to the enclosing function and are valid targets for `JMP`, `JMPIF`, and `JMPNOT`.
 
 ```intense
-main:
+def main
     SET 3
 $loop:
     PRINT
     SUB 1
-    JMPNOT $done
-    JMP $loop
-$done:
+    JMPIF $loop
     RET
+end
 ```
 
 ### String Operations
@@ -334,29 +426,34 @@ RET
 end
 ```
 
-The legacy `label:` form remains accepted for existing source files.
+Functions must be declared with `def name` and closed with `end`.
 
-Tape module functions:
+Tape-stored code:
 
 ```intense
+def file_directory_body
+SET "module directory"
+PRINT
+RET
+end
+
 def main
 TAPE 1
-TAPENAME file_tape
+TAPE_NAME file_tape
 SEEK 10
-SET (SET "module directory" ; PRINT)
-TAPEDEF get_current_file_directory
-
-TAPE 0
-CALL file_tape.get_current_file_directory
+QUOTE_FUNCTION file_directory_body
+SEEK 0
+CALL @10
 RET
 end
 ```
 
-The function body lives in tape cell `10`; rewriting that cell changes the next
-call. You can also edit cell `-1` directly as a map such as
-`{"get_current_file_directory":10}`. Tape module calls execute with that module
-tape active, start at cell `0`, and restore the module pointer when the call
-returns so the function cell and directory cell are not overwritten by accident.
+`QUOTE_FUNCTION name` copies a normal `def ... end` body into the current cell as
+a `Code` value, which is much more workable for larger logic than a one-line
+`SET (...)` literal. The function body lives in tape cell `10`; rewriting that
+cell or patching it with `CODESET` changes the next call. A named tape is still
+just a tape: switch to it, position the pointer where you want execution state,
+and call the code cell with `CALL @cell`.
 
 Reusable stdlib tape loop helper:
 
@@ -379,7 +476,20 @@ runs on that tape and should mutate cell `0` toward a falsy value.
 
 | Instruction          | Description |
 |----------------------|-------------|
-| `CALL name [args…]`  | Push frame, run a source function, tape module function, function name cell, or Code value |
+| `CALL name [args…]`  | Push frame, run a source function, function name cell, or Code value |
+| `QUOTE_FUNCTION name` | Copy a `def ... end` body into the current cell as mutable Code |
+| `WORKSHEET_BEGIN [name]` | Open an incognito worksheet tape for temporary reasoning |
+| `POET_SEARCH [query] [limit]` | Retrieve relevant tape/cell references, including routed `address`, into the current cell |
+| `POET_STRATEGY [problem]` | Select a problem-solving strategy and rational layers |
+| `RATIONAL_RUN [layer]` | Produce structured evidence from a selected rational layer |
+| `ROUTE_FRAME key [decision] [question]` | Define a model-level router frame in an Intense model file |
+| `ROUTE_TRIGGER frame_key concept_key [strength]` | Declare which central resources activate the frame |
+| `ROUTE_SLOT frame_key slot_key [question]` | Declare what missing information the frame needs before continuing |
+| `ROUTE_OBSERVE [text] [memory_tape]` | Grow tape-native memory from a supplied statement |
+| `ROUTE_CONTEXT [text] [memory_tape]` | Visualize what the active model understands before any solution path is chosen |
+| `ROUTE_CACHE [memory_tape]` | Inspect hot/warm/cold model-memory cells for runtime cache behavior |
+| `ROUTE_PACK` / `ROUTE_UNPACK` | Move route memory between active model tapes and scalar DB-storable snapshots |
+| `ROUTE_REASON [text] [memory_tape]` | Optional frame dispatch when the loaded model wants to act on the context |
 | `ARG index`          | Load call argument at `index` into current cell |
 | `RET`                | Return from current function |
 | `EXIT`               | Halt the entire running program or REPL session |
@@ -426,6 +536,9 @@ runs on that tape and should mutate cell `0` toward a falsy value.
 | `examples/test_join_json_utils.in10s` | JOIN, JSONHAS, JSONKEYS, JSONDEL |
 | `examples/test_inter_tape_comm.in10s` | TAPEREAD, TAPEWRITE, TAPESWAP, TAPESEND, TAPERECV |
 | `examples/test_try_catch.in10s` | TRY, RAISE, catch Code cells |
+| `examples/test_tape_modules.in10s` | Tape names, `QUOTE_FUNCTION`, direct Code-cell calls, code patching |
+| `examples/test_emotional_tape.in10s` | Hormone tape levels, triggers, combo events, refractory blocks, shutdown |
+| `examples/test_poet_hrm.in10s` | Incognito worksheet, tape search, strategy selection, rational evidence, hormone field drift |
 | `examples/test_arithmetic.intense` | ADD, SUB, MUL, DIV, MOD, int/float promotion, `@N` cell references |
 | `examples/example_json.intense` | JSON object/array storage |
 | `examples/example_import.intense` | IMPORT directive |

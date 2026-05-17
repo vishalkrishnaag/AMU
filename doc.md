@@ -123,11 +123,12 @@ Functions are:
 - symbolic transformation groups
 
 Example syntax:
-main:
+def main
     SET "hello"
     MOVE 10
     CALL analyze
     RET
+end
 
 Instructions
 -------------
@@ -135,13 +136,22 @@ Core instructions:
 - MOVE n
 - BACK n
 - TAPE n
-- TAPENAME name
-- TAPEDEF name [cell]
+- TAPE_NAME name
+- WORKSHEET_BEGIN name
+- WORKSHEET_END
+- EMO_INIT name
+- HORMONE name ... end
+- EMO_FIELD
+- EMO_ON event action conditions
+- EMO_CHECK
+- EMO_TICK n
+- POET_SEARCH query
+- POET_STRATEGY problem
+- RATIONAL_RUN layer
 - SET value
 - COPY
 - COMPARE
 - CALL label
-- CALL tapeName.functionName
 - RET
 - EXEC
 - EVAL
@@ -151,11 +161,61 @@ Core instructions:
 - DELETE
 - LENGTH
 
-Instructions themselves may be stored inside tape cells.
-Tape modules use cell -2 for the tape name and cell -1 for a map of
-function names to code/source cells, so changing those cells changes how
-module calls resolve. A module call runs with that tape active, starts at cell
-0, and restores the module pointer after return.
+Instructions themselves may be stored inside tape cells. `TAPE_NAME` names a
+tape for easy selection, and `QUOTE_FUNCTION name` copies a normal def/end
+function body into the current cell as Code, so larger logic can be edited as
+source first and still become mutable tape data.
+
+Incognito worksheets are temporary tapes created by `WORKSHEET_BEGIN`. They hold
+visualized problem state, retrieved associations, candidate strategies, and
+validation traces, then disappear on `WORKSHEET_END` or function return unless
+promoted with `WORKSHEET_KEEP`.
+
+Emotional tapes store programmable signal levels in reserved cells: hormones in
+cell -20, event rules in cell -21, and logical time in cell -22. Hormone names
+are custom, behaviors are metadata, levels can drift toward baselines on
+`EMO_TICK`, and `EMO_FIELD` exposes the current emotional bias for traversal.
+Use block definitions for readable hormone state:
+
+```intense
+HORMONE curiosity
+    hormone_level 80
+    hormone_nature curiosity
+    hormone_min 0
+    hormone_max 100
+    hormone_baseline 20
+    hormone_decay 0.5
+    hormone_sensitivity 1
+    hormone_weight 1
+end
+```
+
+Poet-HRM uses explicit symbolic context instead of hidden vector state:
+`POET_SEARCH` retrieves relevant tape cells, `POET_STRATEGY` chooses a light or
+heavy reasoning path, and `RATIONAL_RUN` records evidence from boolean, fuzzy,
+math, NLP, or ML-style layers.
+
+Routing extends the primitive inter-tape model with simple resource addresses:
+`1.2` means tape 1, cell 2, and `memory_1alpha.2` uses a tape name as the tape
+side. Existing read/write/message instructions accept these routed addresses
+directly, while `ROUTE_LINK`, `ROUTE_TOUCH`, and `ROUTE_FOLLOW` store weighted
+cell-to-cell connections in reserved route registries on the tapes. This lets a
+cell for `walk mode` point to `google map`, and `google map` point to `map`,
+without hiding the association outside the symbolic tape substrate.
+
+Learning is also tape-native. `ROUTE_OBSERVE`/`ROUTE_LEARN` takes supplied text, creates
+an observation cell, allocates or reuses resource cells through a resource index,
+and writes evidence links such as `mentions`, `co_occurs`, and `contains`.
+Model files define central router points with `ROUTE_RESOURCE`, `ROUTE_ASSOC`,
+`ROUTE_FRAME`, `ROUTE_TRIGGER`, and `ROUTE_SLOT`. `ROUTE_CONTEXT` performs
+direct indexed matching and returns recognized resources, unresolved concepts,
+nearby route links, and possible frames without deciding a response. When a
+loaded model explicitly wants action, `ROUTE_REASON` uses the same context to
+return the chosen frame, decision, and missing slots. Runtime cache lifecycle is
+kept visible through `ROUTE_USE`, `ROUTE_CACHE`, and `ROUTE_PACK`, so frequently
+used route cells stay hot in the model tape. Cold packed cells are scalar JSON
+snapshots that can be stored through the DB tape layer and later rehydrated with
+`ROUTE_UNPACK`.
 
 Example:
 Cell may contain:
@@ -219,13 +279,12 @@ Requirements:
 - use LRU eviction
 - avoid huge memory usage
 
-Preferred function labels:
+Function definitions:
 def label
     ...
 end
 
-Legacy labels are still accepted:
-label:
+Functions must use `def name` and close with `end`.
 
 Store:
 unordered_map<string, streampos>
@@ -240,13 +299,10 @@ NO semicolons required.
 
 One instruction per line.
 
-Preferred functions use:
+Functions use:
 def label
     ...
 end
-
-Legacy labels use:
-label:
 
 Example:
 def main
@@ -478,16 +534,15 @@ which may themselves:
 * move between tapes
 * rewrite themselves
 
-Now a tape can be named and called like a module:
+Now a tape can be named and used as a purpose-specific code/data tape:
 
 ```intense
 TAPE 1
-TAPENAME file_tape
+TAPE_NAME file_tape
 SEEK 10
-SET (SET "current directory" ; PRINT)
-TAPEDEF get_current_file_directory
-TAPE 0
-CALL file_tape.get_current_file_directory
+QUOTE_FUNCTION file_directory_body
+SEEK 0
+CALL @10
 ```
 
 ---

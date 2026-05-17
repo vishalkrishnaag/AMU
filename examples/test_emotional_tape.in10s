@@ -1,0 +1,102 @@
+# Test: programmable emotional / hormone tape.
+# Run: ./intense.out examples/test_emotional_tape.in10s main 6
+
+def dopamine_focus
+SET "dopamine focus"
+PRINT
+RET
+end
+
+def low_adrenaline_rest
+SET "low adrenaline rest"
+PRINT
+RET
+end
+
+def overload_refractory
+SET "combo overload"
+PRINT
+RET
+end
+
+def main
+TAPE 4
+EMO_INIT emotional_tape
+HORMONE cortisol
+    hormone_level 5
+    hormone_nature stress
+    hormone_min 0
+    hormone_max 100
+end
+HORMONE dopamine
+    hormone_level 3
+    hormone_nature reward
+    hormone_min 0
+    hormone_max 100
+end
+HORMONE adrenaline
+    hormone_level 8
+    hormone_nature arousal
+    hormone_min 0
+    hormone_max 100
+end
+HORMONE my_hormone1
+    hormone_level 0
+    hormone_nature inhibitory
+    hormone_min 0
+    hormone_max 100
+end
+
+EMO_ON dopamine_high dopamine_focus cooldown=2 dopamine>=60
+EMO_ON low_adrenaline low_adrenaline_rest adrenaline<=1
+EMO_ON overload overload_refractory cooldown=3 block=dopamine,adrenaline block_for=2 cortisol>=40 dopamine>=60 adrenaline>=70
+
+HORMONE_SET dopamine 60
+EMO_CHECK
+
+HORMONE_SET adrenaline 1
+EMO_CHECK
+
+HORMONE_SET cortisol 45
+HORMONE_SET adrenaline 80
+HORMONE_SET dopamine 70
+EMO_CHECK
+
+# The overload event blocks further dopamine/adrenaline spikes for two ticks.
+HORMONE_ADD dopamine 20
+HORMONE_LEVEL dopamine
+PRINT
+
+# After a refractory period, spiking works again and time-based checks run.
+EMO_TICK 2
+HORMONE_ADD dopamine 5
+HORMONE_LEVEL dopamine
+PRINT
+
+# Custom inhibitory metadata remains programmable state.
+HORMONE_INFO my_hormone1
+JSONGET "behavior"
+PRINT
+
+TAPE 0
+SET "emotional tape done"
+PRINT
+RET
+end
+
+def shutdown_demo
+TAPE 5
+EMO_INIT shutdown_tape
+HORMONE energy
+    hormone_level 10
+    hormone_nature inhibitory
+    hormone_min 0
+    hormone_max 100
+end
+EMO_ON energy_drained EXIT energy<=0
+HORMONE_SET energy 0
+EMO_CHECK
+SET "unreachable"
+PRINT
+RET
+end

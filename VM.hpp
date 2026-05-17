@@ -15,6 +15,13 @@ struct Frame {
     std::vector<Value> savedArgRegs; // snapshot of argRegs taken at CALL time
 };
 
+struct WorksheetFrame {
+    int previousTape = 0;
+    int tapeIndex = 0;
+    std::string name;
+    bool kept = false;
+};
+
 class VM {
 private:
     std::vector<Tape> tapes;
@@ -28,13 +35,14 @@ private:
     std::vector<Value> argRegs;     // argument register file for SETARG/GETARG
     void* dbConn = nullptr;          // optional PostgreSQL connection loaded through libpq at runtime
     std::unordered_map<std::string, int> tapeNameCache;
-    std::unordered_map<std::string, std::pair<int, long long>> tapeFunctionCache;
     int ensureTapeIndex(long long index, const std::string& opcode);
     void syncTapeMetadata(int tapeIndex);
     void syncAllTapeMetadata();
     int resolveTapeSelector(const std::string& selector, const std::string& opcode);
-    bool resolveTapeFunction(const std::string& target, int& tapeIndex, long long& cellIndex);
-    bool callTapeFunction(int tapeIndex, long long cellIndex, const std::string& displayName);
+    std::vector<WorksheetFrame> worksheetStack;
+    int beginWorksheet(const std::string& name);
+    void endWorksheet(bool keep);
+    void cleanupWorksheets(size_t depth);
 
 public:
     VM(

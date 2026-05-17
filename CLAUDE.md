@@ -17,7 +17,7 @@ make                                              # compiles → intense.out
 ./intense.out --repl [file.intense|file.in10s] [tapes=4] [--debug]
 ```
 
-REPL mode executes symbolic instructions, prints the active tape after each step with the active head marked, supports `PRINT_TAPE n` for inspecting another tape, and can load `IMPORT` lines plus function definitions into the live function loader before calling them. On exit it can save immediate statements under `main:` and loaded imports/functions as top-level `.in10s` source.
+REPL mode executes symbolic instructions, prints the active tape after each step with the active head marked, supports `PRINT_TAPE n` for inspecting another tape, and can load `IMPORT` lines plus `def ... end` function definitions into the live function loader before calling them. On exit it can save immediate statements under `def main` and loaded imports/functions as top-level `.in10s` source.
 
 ## Architecture — One Sentence Each
 
@@ -43,23 +43,35 @@ REPL mode executes symbolic instructions, prints the active tape after each step
 - **`#`** starts a comment anywhere on a line (handled in Lexer before token loop)
 - **`SOFTMAX`** subtracts max before exp for numerical stability
 - **Code blocks** use `(INSTR1 ; INSTR2 ; ...)` syntax; `(` tokenised as structured token in Lexer
+- **Functions** must use `def name` and close with `end`; old `name:` function declarations are not indexed
 - **`$label:`** in function bodies = local jump target; does NOT terminate function loading
 - **`argRegs`** vector in VM saved/restored across CALL/RET — callee inherits caller's args, nested calls are transparent
 - **`@N` cell references in arithmetic args** — `ADD @2` reads the operand from tape cell N of the active tape instead of treating it as a literal; resolved by `resolveOperand()` in VM.cpp, used by ADD/SUB/MUL/DIV/MOD
 - **Dynamic tape growth** — non-negative tape indexes grow the VM tape vector on demand; the startup tape count is only the initial capacity.
-- **Tape modules** — cell `-2` stores a tape name, cell `-1` stores a function directory map (`name -> cell`), and `CALL tapeName.fn` executes Code/source stored in that tape cell.
+- **Tape names** — cell `-2` stores a purpose name for a tape; use `TAPE name` to select it, then call Code cells directly with `CALL @cell`
+- **Routed cell addresses** — `tape.cell` addresses such as `1.2` or `memory_1alpha.2` are first-class resource locators; primitive inter-tape ops accept them directly, and `@tape.cell` dereferences a routed cell.
+- **Evidence route learning** — `ROUTE_OBSERVE`/`ROUTE_LEARN` turns supplied statements into observation/resource cells plus explicit weighted evidence links; `ROUTE_CONTEXT` visualizes understanding without solving, while `ROUTE_REASON` is only model-defined dispatch.
+- **Route cache lifecycle** — `ROUTE_USE`, `ROUTE_CACHE`, `ROUTE_PACK`, and `ROUTE_UNPACK` support a hot/warm/cold active model tape; cold packed memories can be persisted through the existing DB tape operations.
+- **`QUOTE_FUNCTION name`** copies a normal `def ... end` body into the current tape cell as Code, including local `$label:` markers for Code-cell loops.
+- **Worksheets** — `WORKSHEET_BEGIN` creates an incognito tape for temporary reasoning; it is auto-cleaned on return unless `WORKSHEET_KEEP` promotes it.
+- **Emotional tapes** — `EMO_INIT` uses reserved cells `-20` hormones, `-21` events, `-22` logical ticks; readable `HORMONE name ... end` blocks define custom signals that drift toward baselines and expose `EMO_FIELD`.
+- **Poet-HRM scaffolding** — `POET_SEARCH`, `POET_STRATEGY`, and `RATIONAL_RUN` keep retrieval, strategy selection, and evidence gates explicit.
 
 ## Instruction Categories
 
-Tape nav/modules: `MOVE`, `BACK`, `HOME`, `TAPE`, `SEEK n`, `PRINT_TAPE n`, `TAPENAME`/`NAMETAPE`, `TAPEDEF`/`TFUNC`, `TAPEUNDEF`, `TAPEFUNCS`  
-Inter-tape: `COPY`, `TAPEREAD`/`TGET`/`PEEK`, `TAPEWRITE`/`TPUT`/`POKE`, `TAPESWAP`/`TSWAP`, `TAPESEND`/`TSEND`/`SEND`, `TAPERECV`/`TRECV`/`RECV`  
+Tape nav/modules: `MOVE`, `BACK`, `HOME`, `TAPE`, `SEEK n`, `PRINT_TAPE n`, `TAPE_NAME`
+Worksheet: `WORKSHEET_BEGIN`, `WORKSHEET_END`, `WORKSHEET_KEEP`, `WORKSHEET_STATE`
+Emotional tape: `EMO_INIT`, `HORMONE`, `HORMONE_SET`, `HORMONE_ADD`, `HORMONE_BLOCK`, `HORMONE_UNBLOCK`, `HORMONE_LEVEL`, `HORMONE_INFO`, `EMO_ON`, `EMO_CHECK`, `EMO_TICK`, `EMO_FIELD`, `EMO_STATE`
+Poet/Rational: `POET_SEARCH`, `POET_STRATEGY`, `RATIONAL_RUN`
+Inter-tape: `COPY`, `TAPEREAD`/`TGET`/`PEEK`, `TAPEWRITE`/`TPUT`/`POKE`, `TAPESWAP`/`TSWAP`, `TAPESEND`/`TSEND`/`SEND`, `TAPERECV`/`TRECV`/`RECV`; these accept old `tape cell` operands or routed `tape.cell` addresses
+Routing: `ROUTE_ADDR`/`RADDR`, `ROUTE_GET`/`RGET`, `ROUTE_SET`/`RSET`, `ROUTE_LINK`/`RLINK`/`CONNECT`, `ROUTE_TOUCH`/`RTOUCH`, `ROUTE_FOLLOW`/`RFOLLOW`, `ROUTE_INFO`/`RINFO`, `ROUTE_RESOURCE`/`RRESOURCE`, `ROUTE_ALIAS`/`RALIAS`, `ROUTE_ASSOC`/`RASSOC`, `ROUTE_FRAME`/`RFRAME`, `ROUTE_TRIGGER`/`RTRIGGER`, `ROUTE_SLOT`/`RSLOT`, `ROUTE_OBSERVE`/`ROBSERVE`, `ROUTE_LEARN`/`RLEARN`, `ROUTE_CONTEXT`/`RCONTEXT`, `ROUTE_USE`/`RUSE`, `ROUTE_CACHE`/`RCACHE`, `ROUTE_PACK`/`RPACK`, `ROUTE_UNPACK`/`RUNPACK`, `ROUTE_REASON`/`RREASON`/`ROUTE_QUERY`
 Cell ops: `SET`, `PRINT`, `PRINTJ`, `LEN`/`LENGTH`, `CMP`/`COMPARE`, `DELETE`, `CLEAR_TAPE`/`CLEARTAPE`, `JSONGET`, `JSONHAS`, `JSONKEYS`, `JSONPARSE`, `JSONLEN`, `JSONSET`, `JSONDEL`, `JSONPUSH`  
 Type sys: `TYPE`, `CAST`  
 Arithmetic: `ADD`, `SUB`, `MUL`, `DIV`, `MOD`, `LT`, `GT`, `LTE`, `GTE`, `ABS`, `NEG` — binary ops accept literal or `@N`; unary ops work on current cell  
 Strings: `CONCAT`, `SPLIT`, `JOIN`, `SUBSTR`, `FIND`, `REPLACE`, `UPPER`, `LOWER`, `REVERSE`  
 File I/O: `READFILE`, `WRITEFILE`, `INPUT`  
 PostgreSQL: `DBCONNECT`, `DBSTATUS`, `DBEXEC`, `DBQUERY`, `DBSELECT`, `DBINSERT`, `DBUPDATE`, `DBDELETE`, `DBCLOSE`, `DB_TAPE_OPEN`, `DB_TAPE_INPUT`, `DB_TAPE_OUTPUT`, `DB_TAPE_SAVE`, `DB_TAPE_LOAD`, `DB_TAPE_EVENT` — loaded through `libpq` at runtime  
-Homoiconic: `EXEC`, `EVAL`, `QUOTE`, `MATCH`, `TRY`, `RAISE`  
+Homoiconic: `EXEC`, `EVAL`, `QUOTE`, `QUOTE_FUNCTION`, `MATCH`, `TRY`, `RAISE`
 Control flow: `JMP $label`, `JMPIF $label`, `JMPNOT $label`  
 Code manip: `CODELEN`, `CODEGET`, `CODESET`, `CODEAPPEND`, `APPEND`, `MAKEANSWERCODE`, `MAKEANSWERSOURCE`  
 ML stats: `MEANVAL`, `STDDEV`, `NORMALIZE`, `ZSCORE`, `SOFTMAX`  
@@ -70,18 +82,16 @@ NLP service: `NLPLOAD`, `NLPTOKENS`, `NLPANALYZE`, `NLPSIM`, `NLPDIFF`, `NLPPRED
 Control: `CALL`, `ARG`, `RET`, `EXIT`, `IMPORT`  
 Arg passing: `SETARG`, `GETARG`, `CLEARARGS`, `ARGCOUNT`
 
-Tape module calls:
+Named tape Code cells:
 ```
 TAPE 1
-TAPENAME file_tape
+TAPE_NAME file_tape
 SEEK 10
-SET (SET "module directory" ; PRINT)
-TAPEDEF get_current_file_directory
-
-TAPE 0
-CALL file_tape.get_current_file_directory
+QUOTE_FUNCTION file_directory_body
+SEEK 0
+CALL @10
 ```
-Rewriting tape 1 cell 10 changes the next module call. Direct manipulation also works by storing the tape name in cell `-2` and the function directory map in cell `-1`. Module calls run with the module tape active, start at cell `0`, and restore that tape pointer on return.
+Rewriting tape 1 cell 10 changes the next Code-cell call. `TAPE_NAME` keeps the tape easy to select while the call model stays direct.
 
 ## Calling Conventions
 
@@ -93,20 +103,22 @@ SET (SET 99)            # computed value
 SETARG 2                # SETARG n with no value → use current cell
 CALL my_fn
 
-my_fn:
+def my_fn
     GETARG 0            # → "hello" in current cell
     GETARG 1            # → 42
     GETARG 2            # → Code block
     RET
+end
 ```
 
 **Legacy inline (still works):**
 ```
 CALL my_fn "hello" 42
-my_fn:
+def my_fn
     ARG 0               # → "hello"
     ARG 1               # → 42
     RET
+end
 ```
 
 ## Code Block Syntax
@@ -116,20 +128,20 @@ SET (MOVE 10 ; SET "hello" ; PRINT)   # literal code block
 EXEC                                   # execute it
 QUOTE PRINT                            # store single instruction as Code
 QUOTE (SET 1 ; ADD 1 ; PRINT)         # store multi-instruction block
+QUOTE_FUNCTION file_directory_body     # store a def/end body as Code
 ```
 
 ## Control Flow (in-function labels)
 
 ```intense
-my_fn:
+def my_fn
     SET 5
 $loop:
     PRINT               # $label: lines are jump targets, not emitted as instructions
     SUB 1
-    JMPNOT $done        # jump if current cell is falsy
-    JMP $loop
-$done:
+    JMPIF $loop
     RET
+end
 ```
 
 ## Test Files
@@ -151,10 +163,15 @@ $done:
 | `examples/test_exit.in10s` | EXIT halts nested calls and Code blocks |
 | `examples/test_argpass.intense` | SETARG GETARG CLEARARGS ARGCOUNT nested call save/restore |
 | `examples/test_stdlib_loop.in10s` | stdlib tape_loop/loop callbacks over a passed tape |
-| `examples/test_tape_modules.in10s` | Tape names, tape-cell function directories, dotted CALL dispatch |
+| `examples/test_tape_modules.in10s` | Tape names, QUOTE_FUNCTION def-body cells, direct Code-cell CALL, CODESET patching |
+| `examples/test_tape_routing.in10s` | Routed `tape.cell` read/write, `@tape.cell`, route links, touch, follow, info |
+| `examples/navigation_route_model.in10s` | Model-defined route resources, central frame, triggers, and missing slot |
+| `examples/test_route_learning.in10s` | Automatic problem learning plus explainable model-defined route reasoning |
+| `examples/test_emotional_tape.in10s` | Custom hormone levels, single/combo triggers, refractory blocks, shutdown event |
+| `examples/test_poet_hrm.in10s` | Incognito worksheet, tape search, strategy selection, rational evidence, hormone field drift |
 | `examples/algorithms_data_structures_probe.in10s` | Tape-native linear search, bubble sort, iterative quicksort, stack, queue |
 
-All tests pass. Run each with `./intense.out examples/<file>.intense main`.
+Run focused checks with `./intense.out examples/<file>.in10s main`. Older label-style examples need migration to `def ... end`.
 
 ## Bugs Already Fixed (do not reintroduce)
 

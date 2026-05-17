@@ -45,4 +45,5 @@ public:
     void buildIndex();
     void appendSource(const std::string& source, const std::filesystem::path& baseDir);
     Function loadFunction(const std::string& name);
+    std::vector<Instruction> loadFunctionCode(const std::string& name);
 };
