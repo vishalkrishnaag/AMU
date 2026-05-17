@@ -1,4 +1,0 @@
-main:
-    SET "water"
-    PRINT
-    RET

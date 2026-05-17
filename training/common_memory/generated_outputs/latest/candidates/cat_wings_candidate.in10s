@@ -1,4 +1,0 @@
-main:
-    SET 0
-    PRINT
-    RET

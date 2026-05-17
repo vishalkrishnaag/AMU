@@ -1,7 +1,0 @@
-IMPORT ./hello.in10s
-IMPORT ./greet.in10s
-
-main:
-    CALL hello
-    CALL greet world
-    RET

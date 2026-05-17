@@ -1,2 +1,0 @@
-{"source":"training/common_memory/facts.json","status":"answered","route":"fact_lookup"}
-2

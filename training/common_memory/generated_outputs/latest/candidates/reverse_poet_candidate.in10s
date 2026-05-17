@@ -1,4 +1,0 @@
-main:
-    SET "teop"
-    PRINT
-    RET

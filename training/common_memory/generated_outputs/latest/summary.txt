@@ -1,5 +1,0 @@
-cases: 11
-passed: 11
-failed: 0
-accuracy: 1.0000
-outputs: /home/vishal/int10s/training/common_memory/generated_outputs/latest

@@ -1,8 +1,0 @@
-main:
-    CALL greet Alice
-    RET
-
-greet:
-    ARG 0
-    PRINT
-    RET

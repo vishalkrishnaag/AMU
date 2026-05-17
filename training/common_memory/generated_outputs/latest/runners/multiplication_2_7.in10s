@@ -1,9 +1,0 @@
-IMPORT /home/vishal/int10s/training/poet_algorithm_v1.in10s
-
-main:
-    SETARG 0 "what is 2 times 7"
-    SETARG 1 "/home/vishal/int10s/training/common_memory/generated_outputs/latest/candidates/multiplication_2_7_candidate.in10s"
-    SETARG 2 "auto"
-    CALL poet_solve
-    PRINT
-    RET

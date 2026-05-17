@@ -1,9 +1,0 @@
-IMPORT /home/vishal/int10s/training/poet_algorithm_v1.in10s
-
-main:
-    SETARG 0 "what color is silence"
-    SETARG 1 "/home/vishal/int10s/training/common_memory/generated_outputs/latest/candidates/unknown_color_silence_candidate.in10s"
-    SETARG 2 "auto"
-    CALL poet_solve
-    PRINT
-    RET

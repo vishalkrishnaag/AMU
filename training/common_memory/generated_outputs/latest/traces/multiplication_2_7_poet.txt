@@ -1,2 +1,0 @@
-{"source":"direct_reusable_route","status":"answered","route":"multiplication"}
-14
